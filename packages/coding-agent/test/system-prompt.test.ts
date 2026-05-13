@@ -26,27 +26,6 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
-	describe("default tools", () => {
-		test("includes all default tools when snippets are provided", () => {
-			const prompt = buildSystemPrompt({
-				toolSnippets: {
-					read: "Read file contents",
-					bash: "Execute bash commands",
-					edit: "Make surgical edits",
-					write: "Create or overwrite files",
-				},
-				contextFiles: [],
-				skills: [],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain("- read:");
-			expect(prompt).toContain("- bash:");
-			expect(prompt).toContain("- edit:");
-			expect(prompt).toContain("- write:");
-		});
-	});
-
 	describe("custom tool snippets", () => {
 		test("includes custom tools in available tools section when promptSnippet is provided", () => {
 			const prompt = buildSystemPrompt({

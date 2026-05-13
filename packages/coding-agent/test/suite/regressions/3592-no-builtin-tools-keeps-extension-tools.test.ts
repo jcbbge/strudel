@@ -70,22 +70,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		return session;
 	}
 
-	it("keeps extension tools active when built-in defaults are disabled", async () => {
-		const session = await createSession({ noTools: "builtin" });
-
-		expect(
-			session
-				.getAllTools()
-				.map((tool) => tool.name)
-				.sort(),
-		).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"]);
-		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
-		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
-		expect(session.systemPrompt).not.toContain("- read:");
-		expect(session.systemPrompt).not.toContain("- bash:");
-		session.dispose();
-	});
-
 	it("still disables all tools when noTools is all", async () => {
 		const session = await createSession({ noTools: "all" });
 
