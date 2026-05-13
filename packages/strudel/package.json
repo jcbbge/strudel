@@ -1,0 +1,31 @@
+{
+	"name": "strudel",
+	"version": "0.0.1",
+	"description": "Strudel: layered agentic bakery harness — a global binary that runs the Pi coding agent with the @strudel/bakery extension preloaded.",
+	"type": "module",
+	"bin": {
+		"strudel": "dist/cli.js"
+	},
+	"files": ["dist", "README.md"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.74.0",
+		"@strudel/bakery": "^0.0.1",
+		"undici": "^7.19.1"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"shx": "^0.4.0",
+		"typescript": "^5.7.3"
+	},
+	"keywords": ["strudel", "agent", "ai", "llm", "cli"],
+	"license": "MIT",
+	"engines": {
+		"node": ">=20.6.0"
+	}
+}
