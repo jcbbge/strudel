@@ -16,15 +16,7 @@ import {
 } from "../messages.js";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.js";
 import { estimateTokens } from "./compaction.js";
-import {
-	computeFileLists,
-	createFileOps,
-	extractFileOpsFromMessage,
-	type FileOperations,
-	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
-	serializeConversation,
-} from "./utils.js";
+import { SUMMARIZATION_SYSTEM_PROMPT, serializeConversation } from "./utils.js";
 
 // ============================================================================
 // Types
@@ -32,25 +24,13 @@ import {
 
 export interface BranchSummaryResult {
 	summary?: string;
-	readFiles?: string[];
-	modifiedFiles?: string[];
 	aborted?: boolean;
 	error?: string;
 }
 
-/** Details stored in BranchSummaryEntry.details for file tracking */
-export interface BranchSummaryDetails {
-	readFiles: string[];
-	modifiedFiles: string[];
-}
-
-export type { FileOperations } from "./utils.js";
-
 export interface BranchPreparation {
 	/** Messages extracted for summarization, in chronological order */
 	messages: AgentMessage[];
-	/** File operations extracted from tool calls */
-	fileOps: FileOperations;
 	/** Total estimated tokens in messages */
 	totalTokens: number;
 }
@@ -175,44 +155,18 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
  * Walks entries from NEWEST to OLDEST, adding messages until we hit the token budget.
  * This ensures we keep the most recent context when the branch is too long.
  *
- * Also collects file operations from:
- * - Tool calls in assistant messages
- * - Existing branch_summary entries' details (for cumulative tracking)
- *
  * @param entries - Entries in chronological order
  * @param tokenBudget - Maximum tokens to include (0 = no limit)
  */
 export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: number = 0): BranchPreparation {
 	const messages: AgentMessage[] = [];
-	const fileOps = createFileOps();
 	let totalTokens = 0;
 
-	// First pass: collect file ops from ALL entries (even if they don't fit in token budget)
-	// This ensures we capture cumulative file tracking from nested branch summaries
-	// Only extract from pi-generated summaries (fromHook !== true), not extension-generated ones
-	for (const entry of entries) {
-		if (entry.type === "branch_summary" && !entry.fromHook && entry.details) {
-			const details = entry.details as BranchSummaryDetails;
-			if (Array.isArray(details.readFiles)) {
-				for (const f of details.readFiles) fileOps.read.add(f);
-			}
-			if (Array.isArray(details.modifiedFiles)) {
-				// Modified files go into both edited and written for proper deduplication
-				for (const f of details.modifiedFiles) {
-					fileOps.edited.add(f);
-				}
-			}
-		}
-	}
-
-	// Second pass: walk from newest to oldest, adding messages until token budget
+	// Walk from newest to oldest, adding messages until token budget
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		const message = getMessageFromEntry(entry);
 		if (!message) continue;
-
-		// Extract file ops from assistant messages (tool calls)
-		extractFileOpsFromMessage(message, fileOps);
 
 		const tokens = estimateTokens(message);
 
@@ -233,7 +187,7 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 		totalTokens += tokens;
 	}
 
-	return { messages, fileOps, totalTokens };
+	return { messages, totalTokens };
 }
 
 // ============================================================================
@@ -290,7 +244,7 @@ export async function generateBranchSummary(
 	const contextWindow = model.contextWindow || 128000;
 	const tokenBudget = contextWindow - reserveTokens;
 
-	const { messages, fileOps } = prepareBranchEntries(entries, tokenBudget);
+	const { messages } = prepareBranchEntries(entries, tokenBudget);
 
 	if (messages.length === 0) {
 		return { summary: "No content to summarize" };
@@ -343,13 +297,7 @@ export async function generateBranchSummary(
 	// Prepend preamble to provide context about the branch summary
 	summary = BRANCH_SUMMARY_PREAMBLE + summary;
 
-	// Compute file lists and append to summary
-	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
-	summary += formatFileOperations(readFiles, modifiedFiles);
-
 	return {
 		summary: summary || "No summary generated",
-		readFiles,
-		modifiedFiles,
 	};
 }

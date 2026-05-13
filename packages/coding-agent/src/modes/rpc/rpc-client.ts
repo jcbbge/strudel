@@ -8,7 +8,6 @@ import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.js";
-import type { BashResult } from "../../core/bash-executor.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.js";
@@ -291,21 +290,6 @@ export class RpcClient {
 	 */
 	async abortRetry(): Promise<void> {
 		await this.send({ type: "abort_retry" });
-	}
-
-	/**
-	 * Execute a bash command.
-	 */
-	async bash(command: string): Promise<BashResult> {
-		const response = await this.send({ type: "bash", command });
-		return this.getData(response);
-	}
-
-	/**
-	 * Abort running bash command.
-	 */
-	async abortBash(): Promise<void> {
-		await this.send({ type: "abort_bash" });
 	}
 
 	/**

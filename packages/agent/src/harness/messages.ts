@@ -16,18 +16,6 @@ export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch tha
 
 export const BRANCH_SUMMARY_SUFFIX = `</summary>`;
 
-export interface BashExecutionMessage {
-	role: "bashExecution";
-	command: string;
-	output: string;
-	exitCode: number | undefined;
-	cancelled: boolean;
-	truncated: boolean;
-	fullOutputPath?: string;
-	timestamp: number;
-	excludeFromContext?: boolean;
-}
-
 export interface CustomMessage<T = unknown> {
 	role: "custom";
 	customType: string;
@@ -53,29 +41,10 @@ export interface CompactionSummaryMessage {
 
 declare module "../types.js" {
 	interface CustomAgentMessages {
-		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
 		compactionSummary: CompactionSummaryMessage;
 	}
-}
-
-export function bashExecutionToText(msg: BashExecutionMessage): string {
-	let text = `Ran \`${msg.command}\`\n`;
-	if (msg.output) {
-		text += `\`\`\`\n${msg.output}\n\`\`\``;
-	} else {
-		text += "(no output)";
-	}
-	if (msg.cancelled) {
-		text += "\n\n(command cancelled)";
-	} else if (msg.exitCode !== null && msg.exitCode !== undefined && msg.exitCode !== 0) {
-		text += `\n\nCommand exited with code ${msg.exitCode}`;
-	}
-	if (msg.truncated && msg.fullOutputPath) {
-		text += `\n\n[Output truncated. Full output: ${msg.fullOutputPath}]`;
-	}
-	return text;
 }
 
 export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
@@ -121,15 +90,6 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	return messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
-				case "bashExecution":
-					if (m.excludeFromContext) {
-						return undefined;
-					}
-					return {
-						role: "user",
-						content: [{ type: "text", text: bashExecutionToText(m) }],
-						timestamp: m.timestamp,
-					};
 				case "custom": {
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {

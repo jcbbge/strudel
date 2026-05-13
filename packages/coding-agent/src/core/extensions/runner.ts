@@ -53,8 +53,6 @@ import type {
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
-	UserBashEvent,
-	UserBashEventResult,
 } from "./types.js";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
@@ -116,7 +114,6 @@ type RunnerEmitEvent = Exclude<
 	ExtensionEvent,
 	| ToolCallEvent
 	| ToolResultEvent
-	| UserBashEvent
 	| ContextEvent
 	| BeforeProviderRequestEvent
 	| BeforeAgentStartEvent
@@ -824,35 +821,6 @@ export class ExtensionRunner {
 		}
 
 		return result;
-	}
-
-	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
-		const ctx = this.createContext();
-
-		for (const ext of this.extensions) {
-			const handlers = ext.handlers.get("user_bash");
-			if (!handlers || handlers.length === 0) continue;
-
-			for (const handler of handlers) {
-				try {
-					const handlerResult = await handler(event, ctx);
-					if (handlerResult) {
-						return handlerResult as UserBashEventResult;
-					}
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "user_bash",
-						error: message,
-						stack,
-					});
-				}
-			}
-		}
-
-		return undefined;
 	}
 
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {

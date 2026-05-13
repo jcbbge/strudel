@@ -15,58 +15,7 @@ import {
 	createCustomMessage,
 } from "../messages.js";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../session-manager.js";
-import {
-	computeFileLists,
-	createFileOps,
-	extractFileOpsFromMessage,
-	type FileOperations,
-	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
-	serializeConversation,
-} from "./utils.js";
-
-// ============================================================================
-// File Operation Tracking
-// ============================================================================
-
-/** Details stored in CompactionEntry.details for file tracking */
-export interface CompactionDetails {
-	readFiles: string[];
-	modifiedFiles: string[];
-}
-
-/**
- * Extract file operations from messages and previous compaction entries.
- */
-function extractFileOperations(
-	messages: AgentMessage[],
-	entries: SessionEntry[],
-	prevCompactionIndex: number,
-): FileOperations {
-	const fileOps = createFileOps();
-
-	// Collect from previous compaction's details (if pi-generated)
-	if (prevCompactionIndex >= 0) {
-		const prevCompaction = entries[prevCompactionIndex] as CompactionEntry;
-		if (!prevCompaction.fromHook && prevCompaction.details) {
-			// fromHook field kept for session file compatibility
-			const details = prevCompaction.details as CompactionDetails;
-			if (Array.isArray(details.readFiles)) {
-				for (const f of details.readFiles) fileOps.read.add(f);
-			}
-			if (Array.isArray(details.modifiedFiles)) {
-				for (const f of details.modifiedFiles) fileOps.edited.add(f);
-			}
-		}
-	}
-
-	// Extract from tool calls in messages
-	for (const msg of messages) {
-		extractFileOpsFromMessage(msg, fileOps);
-	}
-
-	return fileOps;
-}
+import { SUMMARIZATION_SYSTEM_PROMPT, serializeConversation } from "./utils.js";
 
 // ============================================================================
 // Message Extraction
@@ -275,10 +224,6 @@ export function estimateTokens(message: AgentMessage): number {
 			}
 			return Math.ceil(chars / 4);
 		}
-		case "bashExecution": {
-			chars = message.command.length + message.output.length;
-			return Math.ceil(chars / 4);
-		}
 		case "branchSummary":
 		case "compactionSummary": {
 			chars = message.summary.length;
@@ -290,11 +235,10 @@ export function estimateTokens(message: AgentMessage): number {
 }
 
 /**
- * Find valid cut points: indices of user, assistant, custom, or bashExecution messages.
+ * Find valid cut points: indices of user, assistant, or custom messages.
  * Never cut at tool results (they must follow their tool call).
  * When we cut at an assistant message with tool calls, its tool results follow it
  * and will be kept.
- * BashExecutionMessage is treated like a user message (user-initiated context).
  */
 function findValidCutPoints(entries: SessionEntry[], startIndex: number, endIndex: number): number[] {
 	const cutPoints: number[] = [];
@@ -304,7 +248,6 @@ function findValidCutPoints(entries: SessionEntry[], startIndex: number, endInde
 			case "message": {
 				const role = entry.message.role;
 				switch (role) {
-					case "bashExecution":
 					case "custom":
 					case "branchSummary":
 					case "compactionSummary":
@@ -337,9 +280,8 @@ function findValidCutPoints(entries: SessionEntry[], startIndex: number, endInde
 }
 
 /**
- * Find the user message (or bashExecution) that starts the turn containing the given entry index.
+ * Find the user message that starts the turn containing the given entry index.
  * Returns -1 if no turn start found before the index.
- * BashExecutionMessage is treated like a user message for turn boundaries.
  */
 export function findTurnStartIndex(entries: SessionEntry[], entryIndex: number, startIndex: number): number {
 	for (let i = entryIndex; i >= startIndex; i--) {
@@ -350,7 +292,7 @@ export function findTurnStartIndex(entries: SessionEntry[], entryIndex: number, 
 		}
 		if (entry.type === "message") {
 			const role = entry.message.role;
-			if (role === "user" || role === "bashExecution") {
+			if (role === "user") {
 				return i;
 			}
 		}
@@ -550,7 +492,7 @@ export async function generateSummary(
 	}
 
 	// Serialize conversation to text so model doesn't try to continue it
-	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
+	// Convert to LLM messages first (handles custom types like custom, etc.)
 	const llmMessages = convertToLlm(currentMessages);
 	const conversationText = serializeConversation(llmMessages);
 
@@ -608,8 +550,6 @@ export interface CompactionPreparation {
 	tokensBefore: number;
 	/** Summary from previous compaction, for iterative update */
 	previousSummary?: string;
-	/** File operations extracted from messagesToSummarize */
-	fileOps: FileOperations;
 	/** Compaction settions from settings.jsonl	*/
 	settings: CompactionSettings;
 }
@@ -669,16 +609,6 @@ export function prepareCompaction(
 		}
 	}
 
-	// Extract file operations from messages and previous compaction
-	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
-
-	// Also extract file ops from turn prefix if splitting
-	if (cutPoint.isSplitTurn) {
-		for (const msg of turnPrefixMessages) {
-			extractFileOpsFromMessage(msg, fileOps);
-		}
-	}
-
 	return {
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -686,7 +616,6 @@ export function prepareCompaction(
 		isSplitTurn: cutPoint.isSplitTurn,
 		tokensBefore,
 		previousSummary,
-		fileOps,
 		settings,
 	};
 }
@@ -733,7 +662,6 @@ export async function compact(
 		isSplitTurn,
 		tokensBefore,
 		previousSummary,
-		fileOps,
 		settings,
 	} = preparation;
 
@@ -783,10 +711,6 @@ export async function compact(
 		);
 	}
 
-	// Compute file lists and append to summary
-	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
-	summary += formatFileOperations(readFiles, modifiedFiles);
-
 	if (!firstKeptEntryId) {
 		throw new Error("First kept entry has no UUID - session may need migration");
 	}
@@ -795,7 +719,7 @@ export async function compact(
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
-		details: { readFiles, modifiedFiles } as CompactionDetails,
+		details: undefined,
 	};
 }
 

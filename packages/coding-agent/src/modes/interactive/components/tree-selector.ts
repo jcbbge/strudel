@@ -515,10 +515,6 @@ class TreeList implements Component {
 				if ("content" in msg && msg.content) {
 					parts.push(this.extractContent(msg.content));
 				}
-				if (msg.role === "bashExecution") {
-					const bashMsg = msg as { command?: string };
-					if (bashMsg.command) parts.push(bashMsg.command);
-				}
 				break;
 			}
 			case "custom_message": {
@@ -733,9 +729,6 @@ class TreeList implements Component {
 					} else {
 						result = theme.fg("muted", `[${toolMsg.toolName ?? "tool"}]`);
 					}
-				} else if (role === "bashExecution") {
-					const bashMsg = msg as { command?: string };
-					result = theme.fg("dim", `[bash]: ${normalize(bashMsg.command ?? "")}`);
 				} else {
 					result = theme.fg("dim", `[${role}]`);
 				}

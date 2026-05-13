@@ -41,7 +41,6 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.js";
-import type { BashResult } from "../bash-executor.js";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
 import type { EventBus } from "../event-bus.js";
 import type { ExecOptions, ExecResult } from "../exec.js";
@@ -59,21 +58,13 @@ import type {
 import type { SlashCommandInfo } from "../slash-commands.js";
 import type { SourceInfo } from "../source-info.js";
 import type { BuildSystemPromptOptions } from "../system-prompt.js";
-import type { BashOperations } from "../tools/bash.js";
-import type { EditToolDetails } from "../tools/edit.js";
 import type {
-	BashToolDetails,
-	BashToolInput,
-	EditToolInput,
 	FindToolDetails,
 	FindToolInput,
 	GrepToolDetails,
 	GrepToolInput,
 	LsToolDetails,
 	LsToolInput,
-	ReadToolDetails,
-	ReadToolInput,
-	WriteToolInput,
 } from "../tools/index.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
@@ -726,21 +717,6 @@ export interface ThinkingLevelSelectEvent {
 }
 
 // ============================================================================
-// User Bash Events
-// ============================================================================
-
-/** Fired when user executes a bash command via ! or !! prefix */
-export interface UserBashEvent {
-	type: "user_bash";
-	/** The command to execute */
-	command: string;
-	/** True if !! prefix was used (excluded from LLM context) */
-	excludeFromContext: boolean;
-	/** Current working directory */
-	cwd: string;
-}
-
-// ============================================================================
 // Input Events
 // ============================================================================
 
@@ -773,26 +749,6 @@ interface ToolCallEventBase {
 	toolCallId: string;
 }
 
-export interface BashToolCallEvent extends ToolCallEventBase {
-	toolName: "bash";
-	input: BashToolInput;
-}
-
-export interface ReadToolCallEvent extends ToolCallEventBase {
-	toolName: "read";
-	input: ReadToolInput;
-}
-
-export interface EditToolCallEvent extends ToolCallEventBase {
-	toolName: "edit";
-	input: EditToolInput;
-}
-
-export interface WriteToolCallEvent extends ToolCallEventBase {
-	toolName: "write";
-	input: WriteToolInput;
-}
-
 export interface GrepToolCallEvent extends ToolCallEventBase {
 	toolName: "grep";
 	input: GrepToolInput;
@@ -819,15 +775,7 @@ export interface CustomToolCallEvent extends ToolCallEventBase {
  * `event.input` is mutable. Mutate it in place to patch tool arguments before execution.
  * Later `tool_call` handlers see earlier mutations. No re-validation is performed after mutation.
  */
-export type ToolCallEvent =
-	| BashToolCallEvent
-	| ReadToolCallEvent
-	| EditToolCallEvent
-	| WriteToolCallEvent
-	| GrepToolCallEvent
-	| FindToolCallEvent
-	| LsToolCallEvent
-	| CustomToolCallEvent;
+export type ToolCallEvent = GrepToolCallEvent | FindToolCallEvent | LsToolCallEvent | CustomToolCallEvent;
 
 interface ToolResultEventBase {
 	type: "tool_result";
@@ -835,26 +783,6 @@ interface ToolResultEventBase {
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
-}
-
-export interface BashToolResultEvent extends ToolResultEventBase {
-	toolName: "bash";
-	details: BashToolDetails | undefined;
-}
-
-export interface ReadToolResultEvent extends ToolResultEventBase {
-	toolName: "read";
-	details: ReadToolDetails | undefined;
-}
-
-export interface EditToolResultEvent extends ToolResultEventBase {
-	toolName: "edit";
-	details: EditToolDetails | undefined;
-}
-
-export interface WriteToolResultEvent extends ToolResultEventBase {
-	toolName: "write";
-	details: undefined;
 }
 
 export interface GrepToolResultEvent extends ToolResultEventBase {
@@ -878,29 +806,9 @@ export interface CustomToolResultEvent extends ToolResultEventBase {
 }
 
 /** Fired after a tool executes. Can modify result. */
-export type ToolResultEvent =
-	| BashToolResultEvent
-	| ReadToolResultEvent
-	| EditToolResultEvent
-	| WriteToolResultEvent
-	| GrepToolResultEvent
-	| FindToolResultEvent
-	| LsToolResultEvent
-	| CustomToolResultEvent;
+export type ToolResultEvent = GrepToolResultEvent | FindToolResultEvent | LsToolResultEvent | CustomToolResultEvent;
 
 // Type guards for ToolResultEvent
-export function isBashToolResult(e: ToolResultEvent): e is BashToolResultEvent {
-	return e.toolName === "bash";
-}
-export function isReadToolResult(e: ToolResultEvent): e is ReadToolResultEvent {
-	return e.toolName === "read";
-}
-export function isEditToolResult(e: ToolResultEvent): e is EditToolResultEvent {
-	return e.toolName === "edit";
-}
-export function isWriteToolResult(e: ToolResultEvent): e is WriteToolResultEvent {
-	return e.toolName === "write";
-}
 export function isGrepToolResult(e: ToolResultEvent): e is GrepToolResultEvent {
 	return e.toolName === "grep";
 }
@@ -916,8 +824,8 @@ export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
  *
  * Built-in tools narrow automatically (no type params needed):
  * ```ts
- * if (isToolCallEventType("bash", event)) {
- *   event.input.command;  // string
+ * if (isToolCallEventType("grep", event)) {
+ *   event.input.pattern;  // string
  * }
  * ```
  *
@@ -928,13 +836,9 @@ export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
  * }
  * ```
  *
- * Note: Direct narrowing via `event.toolName === "bash"` doesn't work because
+ * Note: Direct narrowing via `event.toolName === "grep"` doesn't work because
  * CustomToolCallEvent.toolName is `string` which overlaps with all literals.
  */
-export function isToolCallEventType(toolName: "bash", event: ToolCallEvent): event is BashToolCallEvent;
-export function isToolCallEventType(toolName: "read", event: ToolCallEvent): event is ReadToolCallEvent;
-export function isToolCallEventType(toolName: "edit", event: ToolCallEvent): event is EditToolCallEvent;
-export function isToolCallEventType(toolName: "write", event: ToolCallEvent): event is WriteToolCallEvent;
 export function isToolCallEventType(toolName: "grep", event: ToolCallEvent): event is GrepToolCallEvent;
 export function isToolCallEventType(toolName: "find", event: ToolCallEvent): event is FindToolCallEvent;
 export function isToolCallEventType(toolName: "ls", event: ToolCallEvent): event is LsToolCallEvent;
@@ -966,7 +870,6 @@ export type ExtensionEvent =
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
 	| ThinkingLevelSelectEvent
-	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
 	| ToolResultEvent;
@@ -985,14 +888,6 @@ export interface ToolCallEventResult {
 	/** Block tool execution. To modify arguments, mutate `event.input` in place instead. */
 	block?: boolean;
 	reason?: string;
-}
-
-/** Result from user_bash event handler */
-export interface UserBashEventResult {
-	/** Custom operations to use for execution */
-	operations?: BashOperations;
-	/** Full replacement: extension handled execution, use this result */
-	result?: BashResult;
 }
 
 export interface ToolResultEventResult {
@@ -1122,7 +1017,6 @@ export interface ExtensionAPI {
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
 
 	// =========================================================================

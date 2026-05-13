@@ -161,8 +161,6 @@ function extractText(messages: AgentMessage[]): string {
 								.filter((block): block is { type: "text"; text: string } => block.type === "text")
 								.map((block) => block.text)
 								.join(" ");
-				case "bashExecution":
-					return `${message.command}\n${message.output}`;
 				default:
 					return "";
 			}

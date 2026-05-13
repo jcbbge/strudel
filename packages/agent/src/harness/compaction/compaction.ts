@@ -282,10 +282,6 @@ export function estimateTokens(message: AgentMessage): number {
 			}
 			return Math.ceil(chars / 4);
 		}
-		case "bashExecution": {
-			chars = message.command.length + message.output.length;
-			return Math.ceil(chars / 4);
-		}
 		case "branchSummary":
 		case "compactionSummary": {
 			chars = message.summary.length;
@@ -297,11 +293,10 @@ export function estimateTokens(message: AgentMessage): number {
 }
 
 /**
- * Find valid cut points: indices of user, assistant, custom, or bashExecution messages.
+ * Find valid cut points: indices of user, assistant, or custom messages.
  * Never cut at tool results (they must follow their tool call).
  * When we cut at an assistant message with tool calls, its tool results follow it
  * and will be kept.
- * BashExecutionMessage is treated like a user message (user-initiated context).
  */
 function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, endIndex: number): number[] {
 	const cutPoints: number[] = [];
@@ -311,7 +306,6 @@ function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, end
 			case "message": {
 				const role = entry.message.role;
 				switch (role) {
-					case "bashExecution":
 					case "custom":
 					case "branchSummary":
 					case "compactionSummary":
@@ -344,9 +338,8 @@ function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, end
 }
 
 /**
- * Find the user message (or bashExecution) that starts the turn containing the given entry index.
+ * Find the user message that starts the turn containing the given entry index.
  * Returns -1 if no turn start found before the index.
- * BashExecutionMessage is treated like a user message for turn boundaries.
  */
 export function findTurnStartIndex(entries: SessionTreeEntry[], entryIndex: number, startIndex: number): number {
 	for (let i = entryIndex; i >= startIndex; i--) {
@@ -357,7 +350,7 @@ export function findTurnStartIndex(entries: SessionTreeEntry[], entryIndex: numb
 		}
 		if (entry.type === "message") {
 			const role = entry.message.role;
-			if (role === "user" || role === "bashExecution") {
+			if (role === "user") {
 				return i;
 			}
 		}

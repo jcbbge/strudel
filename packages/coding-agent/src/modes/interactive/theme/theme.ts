@@ -435,10 +435,6 @@ export class Theme {
 				return (str: string) => this.fg("thinkingOff", str);
 		}
 	}
-
-	getBashModeBorderColor(): (str: string) => string {
-		return (str: string) => this.fg("bashMode", str);
-	}
 }
 
 // ============================================================================

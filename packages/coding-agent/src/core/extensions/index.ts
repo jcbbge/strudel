@@ -30,9 +30,6 @@ export type {
 	// App keybindings (for custom editors)
 	AppKeybinding,
 	AutocompleteProviderFactory,
-	// Events - Tool (ToolCallEvent types)
-	BashToolCallEvent,
-	BashToolResultEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderRequestEvent,
@@ -48,8 +45,6 @@ export type {
 	CustomToolCallEvent,
 	CustomToolResultEvent,
 	EditorFactory,
-	EditToolCallEvent,
-	EditToolResultEvent,
 	ExecOptions,
 	ExecResult,
 	Extension,
@@ -100,8 +95,6 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
-	ReadToolCallEvent,
-	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
 	RegisteredTool,
@@ -149,24 +142,15 @@ export type {
 	TreePreparation,
 	TurnEndEvent,
 	TurnStartEvent,
-	// Events - User Bash
-	UserBashEvent,
-	UserBashEventResult,
 	WidgetPlacement,
 	WorkingIndicatorOptions,
-	WriteToolCallEvent,
-	WriteToolResultEvent,
 } from "./types.js";
 // Type guards
 export {
 	defineTool,
-	isBashToolResult,
-	isEditToolResult,
 	isFindToolResult,
 	isGrepToolResult,
 	isLsToolResult,
-	isReadToolResult,
 	isToolCallEventType,
-	isWriteToolResult,
 } from "./types.js";
 export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.js";
