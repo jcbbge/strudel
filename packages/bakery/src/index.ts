@@ -13,6 +13,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Cupboard } from "./cupboard.js";
+import { forageDirectory } from "./forage.js";
 import { LocalLlm } from "./llm.js";
 import { Pantry } from "./pantry.js";
 import { registerFromDirectory } from "./registry.js";
@@ -25,6 +27,13 @@ interface PantrySearchToolDetails {
 	error?: string;
 }
 
+export type { CupboardListOptions, CupboardOptions, CupboardRow, StashSummary } from "./cupboard.js";
+export { Cupboard } from "./cupboard.js";
+export type { ForageOptions, ForageResult } from "./forage.js";
+export { defaultForagers, forageDirectory } from "./forage.js";
+export type { Forager, ForagerContext, RawCandidate, SourceParadigm } from "./forager.js";
+export { ALWAYS_SKIP_DIRS, INLINE_CONTENT_LIMIT } from "./forager.js";
+export { PiExtensionForager } from "./foragers/pi-extension.js";
 export { LocalLlm } from "./llm.js";
 export type { PantryOptions, RegisterInput, SearchOptions } from "./pantry.js";
 export { Pantry } from "./pantry.js";
@@ -116,6 +125,7 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 	const surreal = new SurrealClient();
 	const llm = new LocalLlm();
 	const pantry = new Pantry({ surreal, llm });
+	const cupboard = new Cupboard({ surreal });
 
 	pi.on("before_agent_start", (event) => {
 		return { systemPrompt: `${MASTER_BAKER_IDENTITY}\n\n${event.systemPrompt}` };
@@ -191,7 +201,7 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("strudel", {
 		description:
-			"Strudel bakery introspection: /strudel status | /strudel pantry list [kind] | /strudel pantry reset | /strudel pantry sync [path]",
+			"Strudel bakery: /strudel status | pantry list [kind] | pantry reset | pantry sync [path] | forage <path> | cupboard list [paradigm] | cupboard reset",
 		handler: async (args, ctx) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const sub = tokens[0] ?? "status";
@@ -200,9 +210,16 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 					const llmAvailable = await llm.isAvailable();
 					const surrealMs = await surreal.ping().catch((e) => `unreachable (${(e as Error).message})`);
 					const info = pantry.info;
+					const cupboardSummary = await cupboard
+						.summary()
+						.catch(() => ({ total: 0, reviewed: 0, by_paradigm: {} as Record<string, number> }));
+					const cupboardBreakdown = Object.entries(cupboardSummary.by_paradigm)
+						.map(([k, n]) => `${k}=${n}`)
+						.join(", ");
 					const lines = [
-						`Surreal: ${info.surreal.url} ns=${info.surreal.namespace} db=${info.surreal.database} — ${typeof surrealMs === "number" ? `${surrealMs}ms` : surrealMs}`,
-						`LLM:     ${info.llm?.baseUrl ?? "(disabled)"} chat=${info.llm?.chatModel ?? "-"} embed=${info.llm?.embeddingModel ?? "-"} — ${llmAvailable ? "available" : "unreachable"}`,
+						`Surreal:  ${info.surreal.url} ns=${info.surreal.namespace} db=${info.surreal.database} — ${typeof surrealMs === "number" ? `${surrealMs}ms` : surrealMs}`,
+						`LLM:      ${info.llm?.baseUrl ?? "(disabled)"} chat=${info.llm?.chatModel ?? "-"} embed=${info.llm?.embeddingModel ?? "-"} — ${llmAvailable ? "available" : "unreachable"}`,
+						`Cupboard: ${cupboardSummary.total} candidate${cupboardSummary.total === 1 ? "" : "s"} (${cupboardSummary.reviewed} reviewed)${cupboardBreakdown ? ` — ${cupboardBreakdown}` : ""}`,
 					];
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
@@ -249,7 +266,56 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`Unknown pantry action: ${action}. Try: list, reset, sync.`, "warning");
 					return;
 				}
-				ctx.ui.notify(`Unknown /strudel subcommand: ${sub}. Try: status, pantry.`, "warning");
+				if (sub === "forage") {
+					const root = tokens[1];
+					if (!root) {
+						ctx.ui.notify("Usage: /strudel forage <path>", "warning");
+						return;
+					}
+					const result = await forageDirectory(cupboard, { root });
+					const breakdown = Object.entries(result.by_paradigm)
+						.map(([k, n]) => `${k}=${n}`)
+						.join(", ");
+					const lines = [
+						`Foraged ${result.root}`,
+						`  ran:      ${result.ran.length > 0 ? result.ran.join(", ") : "(no foragers matched)"}`,
+						`  stashed:  ${result.inserted} new, ${result.updated} updated${breakdown ? ` (${breakdown})` : ""}`,
+						result.errors.length
+							? `  errors:   ${result.errors.length} (first: ${result.errors[0].paradigm} — ${result.errors[0].message})`
+							: "",
+					].filter(Boolean);
+					ctx.ui.notify(lines.join("\n"), result.errors.length > 0 ? "warning" : "info");
+					return;
+				}
+				if (sub === "cupboard") {
+					const action = tokens[1] ?? "list";
+					if (action === "list") {
+						const paradigm = tokens[2];
+						const rows = await cupboard.list({ paradigm, limit: 100 });
+						if (rows.length === 0) {
+							ctx.ui.notify(paradigm ? `Cupboard has no ${paradigm} candidates.` : "Cupboard is empty.", "info");
+							return;
+						}
+						const lines = rows.map((r) => {
+							const reg = (r.adapter_meta?.registers as string[] | undefined)?.join("/") ?? "";
+							const tag = reg ? ` [${reg}]` : "";
+							return `- ${r.source_paradigm}${tag} ${r.source_path}\n    id=${r.id.slice(0, 12)} size=${r.content_size} reviewed=${r.reviewed}`;
+						});
+						ctx.ui.notify(
+							`Cupboard (${rows.length} candidate${rows.length === 1 ? "" : "s"}):\n${lines.join("\n")}`,
+							"info",
+						);
+						return;
+					}
+					if (action === "reset") {
+						await cupboard.reset();
+						ctx.ui.notify("Cupboard wiped clean.", "info");
+						return;
+					}
+					ctx.ui.notify(`Unknown cupboard action: ${action}. Try: list, reset.`, "warning");
+					return;
+				}
+				ctx.ui.notify(`Unknown /strudel subcommand: ${sub}. Try: status, pantry, forage, cupboard.`, "warning");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(`/strudel ${sub} failed: ${message}`, "error");

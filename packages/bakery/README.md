@@ -10,10 +10,14 @@ The Strudel bakery extension. Adds the two Oven primitives — `strudel_search` 
 - [x] `strudel_search` registered (Pantry-backed, hybrid search)
 - [x] SurrealDB-backed Pantry (register / get / list / search / recordBake / reset)
 - [x] Auto-registration of the nine primitives via `registerFromDirectory`
-- [x] `/strudel status | pantry list | pantry reset | pantry sync` slash-commands
+- [x] Cupboard (Phase ① of the foraging pipeline) + `pi-extension` forager
+- [x] `/strudel status | pantry … | forage … | cupboard …` slash-commands
 - [x] Master Baker identity injected as a system-prompt prefix
 - [x] Substrate honors PRD §0.0 commitments (append-only history, `stage` field)
 - [ ] `strudel_bake` is currently a stub
+- [ ] Cupboard-curator subagent (Phase ② — review / classify / promote)
+- [ ] Promotion-policy worker (Phase ④ — draft → active by use)
+- [ ] Additional foragers (claude-skill, mcp-config, agent-md, raw-markdown)
 - [ ] Recipe Planner (intent step)
 - [ ] Oven (sandboxed execution + Code Mode)
 
@@ -38,12 +42,47 @@ The bakery is loaded as a Pi extension. The `strudel` CLI in [`packages/strudel`
 ### Slash commands
 
 ```text
-/strudel status                 # surreal + llm health, pantry config
-/strudel pantry list [kind]     # list ingredients, optionally filtered by kind
-/strudel pantry reset           # wipe the pantry
-/strudel pantry sync [path]     # auto-register a primitives tree
-                                # (default: ~/agent-core/primitives)
+/strudel status                       # surreal + llm health, pantry + cupboard counts
+/strudel pantry list [kind]           # list ingredients, optionally filtered by kind
+/strudel pantry reset                 # wipe the pantry
+/strudel pantry sync [path]           # auto-register a primitives tree
+                                      # (default: ~/agent-core/primitives)
+/strudel forage <path>                # Phase ①: walk a path, stash candidates in cupboard
+/strudel cupboard list [paradigm]     # list cupboard candidates, optional paradigm filter
+/strudel cupboard reset               # wipe the cupboard
 ```
+
+## The foraging pipeline
+
+The Cupboard sits in front of the Pantry. It is where raw, foraged material lands before being judged and shaped into ingredients. Four phases:
+
+```diagram
+╭──────────────────────────────────────────────────────────────────╮
+│  ① SOURCE  ──▶  ② IDENTIFY  ──▶  ③ CLASSIFY  ──▶  ④ PROMOTE     │
+│                                                                  │
+│  /strudel       cupboard        cupboard        ingredient       │
+│  forage         curator         curator         usage policy     │
+│  (mechanical)   subagent        subagent        (mechanical)     │
+│                 (LLM)           (LLM + human)                    │
+╰──────────────────────────────────────────────────────────────────╯
+```
+
+### Phase ① — Source (this release)
+
+`/strudel forage <path>` walks the given root with every registered Forager. Each forager identifies one source paradigm and yields `RawCandidate`s. The Cupboard upserts them by SHA-256 content hash, so re-foraging the same content from any path is idempotent (every observed path is appended to `seen_at`).
+
+Bundled foragers:
+
+| Paradigm        | What it finds                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| `pi-extension`  | Packages depending on `@earendil-works/pi-coding-agent` + loose `.ts/.mjs/.js` extension files. |
+
+Phase ① is intentionally LLM-free. It runs fast and is safe to re-run nightly across many roots.
+
+### Phases ② / ③ / ④ — coming in Track 2
+
+- **Cupboard curator** (subagent ingredient): walks unreviewed candidates, infers `kind`, name, flavor, tags, dependencies; surfaces a recommendation per candidate; on accept, registers into the Pantry as `stage: "draft"` and marks the cupboard row `reviewed`.
+- **Promotion policy worker**: ambient background task that advances drafts to `stage: "active"` once usage stats clear a threshold (e.g. N successful bakes, zero recent failures). Honors PRD §0.0 #3 (ambient, killable, threshold-only surfacing).
 
 ### Tools surfaced to the agent
 
