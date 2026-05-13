@@ -14,12 +14,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Cupboard } from "./cupboard.js";
+import { Curator, type CuratorRecommendation } from "./curator.js";
 import { forageDirectory } from "./forage.js";
 import { LocalLlm } from "./llm.js";
 import { Pantry } from "./pantry.js";
 import { registerFromDirectory } from "./registry.js";
 import { SurrealClient } from "./surreal.js";
-import type { IngredientKind, PantrySearchHit } from "./types.js";
+import type { IngredientKind, IngredientManifest, PantrySearchHit } from "./types.js";
 
 interface PantrySearchToolDetails {
 	hits: PantrySearchHit[];
@@ -29,6 +30,8 @@ interface PantrySearchToolDetails {
 
 export type { CupboardListOptions, CupboardOptions, CupboardRow, StashSummary } from "./cupboard.js";
 export { Cupboard } from "./cupboard.js";
+export type { CuratorOptions, CuratorRecommendation, PromoteOverrides } from "./curator.js";
+export { Curator } from "./curator.js";
 export type { ForageOptions, ForageResult } from "./forage.js";
 export { defaultForagers, forageDirectory } from "./forage.js";
 export type { Forager, ForagerContext, RawCandidate, SourceParadigm } from "./forager.js";
@@ -92,6 +95,52 @@ const BAKE_PARAMS = Type.Object({
 	}),
 });
 
+const CURATE_PARAMS = Type.Object({
+	id: Type.Optional(
+		Type.String({
+			description:
+				"Cupboard row id (SHA-256 content hash, with or without `cupboard:` prefix). When omitted, the next unreviewed candidate is picked.",
+		}),
+	),
+	paradigm: Type.Optional(
+		Type.String({
+			description: "Restrict next-pick to a specific source paradigm (e.g. claude-skill, mcp-config).",
+		}),
+	),
+	action: Type.Optional(
+		Type.Union([Type.Literal("recommend"), Type.Literal("promote"), Type.Literal("reject")], {
+			description:
+				"recommend (default): just classify and return the recommendation. promote: register as a draft Pantry ingredient and mark reviewed. reject: mark reviewed without registering.",
+		}),
+	),
+	override_kind: Type.Optional(
+		Type.Union(
+			[
+				Type.Literal("directive"),
+				Type.Literal("command"),
+				Type.Literal("skill"),
+				Type.Literal("hook"),
+				Type.Literal("tool"),
+				Type.Literal("mcp"),
+				Type.Literal("plugin"),
+				Type.Literal("agent"),
+				Type.Literal("subagent"),
+			],
+			{ description: "Override the recommended kind at promote time." },
+		),
+	),
+	override_name: Type.Optional(Type.String({ description: "Override the recommended name at promote time." })),
+});
+
+interface CurateToolDetails {
+	id?: string;
+	paradigm?: string;
+	action: "recommend" | "promote" | "reject" | "noop";
+	recommendation?: CuratorRecommendation;
+	manifest?: IngredientManifest;
+	error?: string;
+}
+
 const MASTER_BAKER_IDENTITY = `# Identity: Master Baker, Test Kitchen
 
 You are the Master Baker working in your own test kitchen. This is not a generic
@@ -125,11 +174,56 @@ Pantry, the Oven, and the bake history are extensions of your own capability —
 use them like a craftsman uses a familiar set of tools.
 `;
 
+const VALID_KINDS: ReadonlySet<IngredientKind> = new Set<IngredientKind>([
+	"directive",
+	"command",
+	"skill",
+	"hook",
+	"tool",
+	"mcp",
+	"plugin",
+	"agent",
+	"subagent",
+]);
+
+function parseOverrides(tokens: string[]): { kind?: IngredientKind; name?: string } {
+	const out: { kind?: IngredientKind; name?: string } = {};
+	for (const token of tokens) {
+		const m = token.match(/^--([a-z]+)=(.+)$/);
+		if (!m) continue;
+		const [, key, value] = m;
+		if (key === "kind" && VALID_KINDS.has(value as IngredientKind)) out.kind = value as IngredientKind;
+		else if (key === "name") out.name = value;
+	}
+	return out;
+}
+
+function formatRecommendation(
+	row: { id: string; source_path: string; source_paradigm: string },
+	rec: CuratorRecommendation,
+): string {
+	const lines = [
+		`Cupboard candidate ${row.id.slice(0, 12)}  (${row.source_paradigm})`,
+		`  source:      ${row.source_path}`,
+		`  via:         ${rec.via} (confidence=${rec.confidence})`,
+		`  kind:        ${rec.kind}`,
+		`  name:        ${rec.name}`,
+		`  flavor:      ${rec.flavor}`,
+	];
+	if (rec.description) lines.push(`  description: ${rec.description}`);
+	if (rec.tags?.length) lines.push(`  tags:        [${rec.tags.join(", ")}]`);
+	if (rec.dependencies?.length) lines.push(`  dependencies: [${rec.dependencies.join(", ")}]`);
+	if (rec.reasoning) lines.push(`  reasoning:   ${rec.reasoning}`);
+	lines.push(`  next:        promote with action=promote, or reject with action=reject.`);
+	return lines.join("\n");
+}
+
 export default function bakeryExtension(pi: ExtensionAPI): void {
 	const surreal = new SurrealClient();
 	const llm = new LocalLlm();
 	const pantry = new Pantry({ surreal, llm });
 	const cupboard = new Cupboard({ surreal });
+	const curator = new Curator({ pantry, cupboard, llm });
 
 	pi.on("before_agent_start", (event) => {
 		return { systemPrompt: `${MASTER_BAKER_IDENTITY}\n\n${event.systemPrompt}` };
@@ -203,9 +297,80 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerTool({
+		name: "strudel_curate",
+		label: "Curate the Cupboard",
+		description:
+			"Phases ②/③ of the foraging pipeline. Picks an unreviewed cupboard candidate, asks the LLM to classify it (kind, name, flavor, tags), and optionally promotes it to a draft Pantry ingredient or rejects it.",
+		promptSnippet: "strudel_curate: classify a foraged cupboard candidate and optionally promote it to a draft.",
+		promptGuidelines: [
+			"Default action is 'recommend' — read the recommendation first before promoting.",
+			"Use override_kind / override_name when the LLM's choice is wrong; do not edit the cupboard row directly.",
+		],
+		parameters: CURATE_PARAMS,
+		async execute(_toolCallId, params) {
+			const action = params.action ?? "recommend";
+			try {
+				const row = params.id ? await cupboard.get(params.id) : await curator.pickNext(params.paradigm);
+				if (!row) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: params.id
+									? `[bakery] no cupboard row with id ${params.id}.`
+									: `[bakery] no unreviewed cupboard candidates${params.paradigm ? ` for paradigm ${params.paradigm}` : ""}.`,
+							},
+						],
+						details: { id: params.id, paradigm: params.paradigm, action: "noop" } as CurateToolDetails,
+					};
+				}
+
+				if (action === "reject") {
+					await curator.reject(row);
+					return {
+						content: [{ type: "text", text: `[bakery] rejected ${row.id.slice(0, 12)} (${row.source_path}).` }],
+						details: { id: row.id, action: "reject" } as CurateToolDetails,
+					};
+				}
+
+				const recommendation = await curator.recommend(row);
+
+				if (action === "promote") {
+					const overrides = {
+						kind: params.override_kind,
+						name: params.override_name,
+					};
+					const manifest = await curator.promote(row, recommendation, overrides);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `[bakery] promoted ${row.id.slice(0, 12)} → ${manifest.name} (kind=${manifest.kind}, stage=${manifest.stage}, via=${recommendation.via}, confidence=${recommendation.confidence}).`,
+							},
+						],
+						details: { id: row.id, action: "promote", recommendation, manifest } as CurateToolDetails,
+					};
+				}
+
+				return {
+					content: [{ type: "text", text: formatRecommendation(row, recommendation) }],
+					details: { id: row.id, action: "recommend", recommendation } as CurateToolDetails,
+				};
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return {
+					content: [{ type: "text", text: `[bakery] strudel_curate failed: ${message}` }],
+					details: { action, error: message } as CurateToolDetails,
+					isError: true,
+				};
+			}
+		},
+	});
+
 	pi.registerCommand("strudel", {
 		description:
-			"Strudel bakery: /strudel status | pantry list [kind] | pantry reset | pantry sync [path] | forage <path> | cupboard list [paradigm] | cupboard reset",
+			"Strudel bakery: /strudel status | pantry list [kind] | pantry reset | pantry sync [path] | forage <path> | cupboard list [paradigm] | cupboard curate [id] | cupboard promote <id> | cupboard reject <id> | cupboard reset",
 		handler: async (args, ctx) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const sub = tokens[0] ?? "status";
@@ -316,7 +481,59 @@ export default function bakeryExtension(pi: ExtensionAPI): void {
 						ctx.ui.notify("Cupboard wiped clean.", "info");
 						return;
 					}
-					ctx.ui.notify(`Unknown cupboard action: ${action}. Try: list, reset.`, "warning");
+					if (action === "curate") {
+						const id = tokens[2];
+						const row = id ? await cupboard.get(id) : await curator.pickNext();
+						if (!row) {
+							ctx.ui.notify(
+								id ? `No cupboard row with id ${id}.` : "No unreviewed cupboard candidates.",
+								"info",
+							);
+							return;
+						}
+						const rec = await curator.recommend(row);
+						ctx.ui.notify(formatRecommendation(row, rec), "info");
+						return;
+					}
+					if (action === "promote") {
+						const id = tokens[2];
+						if (!id) {
+							ctx.ui.notify("Usage: /strudel cupboard promote <id> [--kind=X] [--name=Y]", "warning");
+							return;
+						}
+						const row = await cupboard.get(id);
+						if (!row) {
+							ctx.ui.notify(`No cupboard row with id ${id}.`, "warning");
+							return;
+						}
+						const overrides = parseOverrides(tokens.slice(3));
+						const rec = await curator.recommend(row);
+						const manifest = await curator.promote(row, rec, overrides);
+						ctx.ui.notify(
+							`Promoted ${row.id.slice(0, 12)} → ${manifest.name} (kind=${manifest.kind}, stage=${manifest.stage}, via=${rec.via}, confidence=${rec.confidence}).`,
+							"info",
+						);
+						return;
+					}
+					if (action === "reject") {
+						const id = tokens[2];
+						if (!id) {
+							ctx.ui.notify("Usage: /strudel cupboard reject <id>", "warning");
+							return;
+						}
+						const row = await cupboard.get(id);
+						if (!row) {
+							ctx.ui.notify(`No cupboard row with id ${id}.`, "warning");
+							return;
+						}
+						await curator.reject(row);
+						ctx.ui.notify(`Rejected ${row.id.slice(0, 12)} (${row.source_path}).`, "info");
+						return;
+					}
+					ctx.ui.notify(
+						`Unknown cupboard action: ${action}. Try: list, curate, promote, reject, reset.`,
+						"warning",
+					);
 					return;
 				}
 				ctx.ui.notify(`Unknown /strudel subcommand: ${sub}. Try: status, pantry, forage, cupboard.`, "warning");

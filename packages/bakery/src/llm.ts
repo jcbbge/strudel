@@ -6,6 +6,8 @@
  * returns undefined and the Pantry falls back to lexical-only behavior.
  */
 
+import type { IngredientKind } from "./types.js";
+
 const DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1";
 const DEFAULT_CHAT_MODEL = "mlx-community/Qwen3-8B-4bit";
 const DEFAULT_EMBEDDING_MODEL = "mlx-community/Qwen3-Embedding-4B-4bit-DWQ";
@@ -107,6 +109,125 @@ Output format: a JSON array of strings, nothing else. The tags MUST describe THI
 				.map((t) => t.trim().toLowerCase())
 				.filter((t) => t.length > 0)
 				.slice(0, 6);
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * Classify a foraged candidate. Returns one of the nine ingredient kinds
+	 * plus a proposed name, flavor, tags, dependencies, and confidence.
+	 *
+	 * Returns undefined on any failure (LLM down, malformed JSON, refusal).
+	 * The Curator falls back to a heuristic in that case.
+	 */
+	async classify(input: {
+		paradigm: string;
+		source_path: string;
+		content_size: number;
+		adapter_meta?: Record<string, unknown>;
+		content: string;
+	}): Promise<
+		| {
+				kind: IngredientKind;
+				name: string;
+				flavor: string;
+				description?: string;
+				tags?: string[];
+				dependencies?: string[];
+				confidence: "low" | "medium" | "high";
+				reasoning?: string;
+		  }
+		| undefined
+	> {
+		if (!(await this.isAvailable())) return undefined;
+		const meta = input.adapter_meta ? JSON.stringify(input.adapter_meta) : "(none)";
+		const prompt = `You are the cupboard-curator in a coding-agent bakery. Classify ONE foraged candidate.
+
+The Pantry knows nine ingredient kinds:
+  - directive: prompt prefix / persona / always-on instruction
+  - command:   slash command or scripted shortcut
+  - skill:     bundled how-to with optional resources (Claude Skills, etc.)
+  - hook:      script run on a lifecycle event
+  - tool:      callable function exposed to the agent
+  - mcp:       Model Context Protocol server config / entry
+  - plugin:    extension package that registers tools/commands/hooks
+  - agent:     a top-level agent definition
+  - subagent:  a delegated agent with a focused role
+
+Candidate metadata:
+  paradigm:     ${input.paradigm}
+  source_path:  ${input.source_path}
+  content_size: ${input.content_size} bytes
+  adapter_meta: ${meta}
+
+Content (truncated):
+"""
+${input.content}
+"""
+
+Decide:
+  1. The most appropriate "kind" (one of the nine above).
+  2. A short snake_case "name" — usually "<kind>.<slug>".
+  3. A one-line "flavor" (<= 140 chars) describing what it does.
+  4. An optional longer "description".
+  5. 3–6 short snake_case "tags" describing purpose / domain.
+  6. Optional "dependencies" (other ingredient names this needs).
+  7. Confidence: "low" / "medium" / "high".
+  8. A one-line "reasoning" note.
+
+Return ONE JSON object matching this shape, nothing else:
+{ "kind": "...", "name": "...", "flavor": "...", "description": "...",
+  "tags": ["..."], "dependencies": [], "confidence": "...", "reasoning": "..." }`;
+
+		try {
+			const response = await this.callJson(`${this.baseUrl}/chat/completions`, {
+				model: this.chatModel,
+				messages: [{ role: "user", content: prompt }],
+				max_tokens: 2048,
+				temperature: 0,
+			});
+			const raw =
+				(response as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? "";
+			const text = raw.replace(/<think>[\s\S]*?<\/think>/g, "");
+			const match = text.match(/\{[\s\S]*\}/);
+			if (!match) return undefined;
+			const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+			const kind = typeof parsed.kind === "string" ? parsed.kind : undefined;
+			const name = typeof parsed.name === "string" ? parsed.name.trim() : undefined;
+			const flavor = typeof parsed.flavor === "string" ? parsed.flavor.trim() : undefined;
+			if (!kind || !name || !flavor) return undefined;
+			const allowed = new Set([
+				"directive",
+				"command",
+				"skill",
+				"hook",
+				"tool",
+				"mcp",
+				"plugin",
+				"agent",
+				"subagent",
+			]);
+			if (!allowed.has(kind)) return undefined;
+			const confidence = (
+				parsed.confidence === "low" || parsed.confidence === "medium" || parsed.confidence === "high"
+					? parsed.confidence
+					: "low"
+			) as "low" | "medium" | "high";
+			return {
+				kind: kind as IngredientKind,
+				name,
+				flavor,
+				description: typeof parsed.description === "string" ? parsed.description : undefined,
+				tags: Array.isArray(parsed.tags)
+					? parsed.tags.filter((t): t is string => typeof t === "string")
+					: undefined,
+				dependencies: Array.isArray(parsed.dependencies)
+					? parsed.dependencies.filter((d): d is string => typeof d === "string")
+					: undefined,
+				confidence,
+				reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : undefined,
+			};
 		} catch {
 			return undefined;
 		}

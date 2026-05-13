@@ -14,10 +14,10 @@ The Strudel bakery extension. Adds the two Oven primitives — `strudel_search` 
 - [x] `/strudel status | pantry … | forage … | cupboard …` slash-commands
 - [x] Master Baker identity injected as a system-prompt prefix
 - [x] Substrate honors PRD §0.0 commitments (append-only history, `stage` field)
+- [x] Cupboard-curator (Phases ②/③ — `strudel_curate` + `/strudel cupboard curate|promote|reject`)
+- [x] Additional foragers (claude-skill, mcp-config, agent-md, raw-markdown)
 - [ ] `strudel_bake` is currently a stub
-- [ ] Cupboard-curator subagent (Phase ② — review / classify / promote)
 - [ ] Promotion-policy worker (Phase ④ — draft → active by use)
-- [ ] Additional foragers (claude-skill, mcp-config, agent-md, raw-markdown)
 - [ ] Recipe Planner (intent step)
 - [ ] Oven (sandboxed execution + Code Mode)
 
@@ -49,6 +49,10 @@ The bakery is loaded as a Pi extension. The `strudel` CLI in [`packages/strudel`
                                       # (default: ~/agent-core/primitives)
 /strudel forage <path>                # Phase ①: walk a path, stash candidates in cupboard
 /strudel cupboard list [paradigm]     # list cupboard candidates, optional paradigm filter
+/strudel cupboard curate [id]         # Phase ②: classify candidate (LLM, heuristic fallback)
+/strudel cupboard promote <id> [--kind=X] [--name=Y]
+                                      # Phase ③: register as draft Pantry ingredient + mark reviewed
+/strudel cupboard reject <id>         # mark reviewed without registering
 /strudel cupboard reset               # wipe the cupboard
 ```
 
@@ -85,17 +89,23 @@ Phase ① is intentionally LLM-free. It runs fast and is safe to re-run nightly 
 
 The walker skips `node_modules`, `.git`, `dist`, `build`, and other always-skip directories — including hidden directories by default. That means files under `.github/`, `.claude/`, `.cursor/`, etc. are not currently picked up; widening the walker is a follow-up if/when it matters.
 
-### Phases ② / ③ / ④ — coming in Track 2
+### Phases ② / ③ — Cupboard curator (this release)
 
-- **Cupboard curator** (subagent ingredient): walks unreviewed candidates, infers `kind`, name, flavor, tags, dependencies; surfaces a recommendation per candidate; on accept, registers into the Pantry as `stage: "draft"` and marks the cupboard row `reviewed`.
-- **Promotion policy worker**: ambient background task that advances drafts to `stage: "active"` once usage stats clear a threshold (e.g. N successful bakes, zero recent failures). Honors PRD §0.0 #3 (ambient, killable, threshold-only surfacing).
+The curator is exposed both as a tool (`strudel_curate`) and as a slash command family (`/strudel cupboard curate|promote|reject`). It picks the next unreviewed candidate, calls the local LLM via `LocalLlm.classify()` to propose a `kind`, name, flavor, tags, dependencies, and confidence; on `promote` it registers the result into the Pantry as `stage: "draft"` (provenance — `cupboard_id`, `source_path`, `source_paradigm`, adapter meta, curator meta — is preserved under `manifest.source`) and marks the cupboard row reviewed.
+
+If the LLM is unreachable the curator falls back to a paradigm-derived heuristic (`pi-extension → plugin`, `claude-skill → skill`, `mcp-config → mcp`, `agent-md → directive`, `raw-markdown → directive`), always at low confidence. That keeps the loop usable on a fresh machine without an LLM, and the human (or a more capable model) can refine later via `/strudel cupboard promote --kind=… --name=…`.
+
+### Phase ④ — Promotion policy worker (deferred)
+
+Ambient background task that advances drafts to `stage: "active"` once usage stats clear a threshold (e.g. N successful bakes, zero recent failures). Honors PRD §0.0 #3 (ambient, killable, threshold-only surfacing).
 
 ### Tools surfaced to the agent
 
-| Tool             | Status   | Purpose                                                                                  |
-| ---------------- | -------- | ---------------------------------------------------------------------------------------- |
-| `strudel_search` | working  | Hybrid search over the Pantry (semantic when LLM is reachable, lexical fallback)         |
-| `strudel_bake`   | stub     | Will run a sandboxed Code-Mode payload composing ingredients; currently echoes the input |
+| Tool             | Status   | Purpose                                                                                                 |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `strudel_search` | working  | Hybrid search over the Pantry (semantic when LLM is reachable, lexical fallback)                        |
+| `strudel_bake`   | stub     | Will run a sandboxed Code-Mode payload composing ingredients; currently echoes the input                |
+| `strudel_curate` | working  | Picks an unreviewed cupboard candidate, classifies it via the LLM, optionally promotes/rejects it       |
 
 ## Backing services
 
