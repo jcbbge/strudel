@@ -1,0 +1,41 @@
+{
+	"name": "@strudel/bakery",
+	"version": "0.0.1",
+	"description": "The Strudel bakery: layered agentic harness with Pantry, Recipe Planner, and Oven primitives.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": ["dist", "README.md", "CHANGELOG.md"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"pi": {
+		"extensions": ["./dist/index.js"]
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.74.0",
+		"typebox": "^1.1.24"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"shx": "^0.4.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.4"
+	},
+	"keywords": ["strudel", "bakery", "agent", "ai", "llm", "pi"],
+	"license": "MIT",
+	"engines": {
+		"node": ">=20.6.0"
+	}
+}
