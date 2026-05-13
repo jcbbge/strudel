@@ -10,7 +10,11 @@
 import path from "node:path";
 import type { Cupboard, StashSummary } from "./cupboard.js";
 import type { Forager, ForagerContext, SourceParadigm } from "./forager.js";
+import { AgentMdForager } from "./foragers/agent-md.js";
+import { ClaudeSkillForager } from "./foragers/claude-skill.js";
+import { McpConfigForager } from "./foragers/mcp-config.js";
 import { PiExtensionForager } from "./foragers/pi-extension.js";
+import { RawMarkdownForager } from "./foragers/raw-markdown.js";
 
 export interface ForageOptions {
 	/** Root directory to scan. Required — no implicit default. */
@@ -31,7 +35,13 @@ export interface ForageResult extends StashSummary {
 
 /** Default foragers shipped with the bakery. */
 export function defaultForagers(): Forager[] {
-	return [new PiExtensionForager()];
+	return [
+		new PiExtensionForager(),
+		new ClaudeSkillForager(),
+		new McpConfigForager(),
+		new AgentMdForager(),
+		new RawMarkdownForager(),
+	];
 }
 
 export async function forageDirectory(cupboard: Cupboard, options: ForageOptions): Promise<ForageResult> {

@@ -73,11 +73,17 @@ The Cupboard sits in front of the Pantry. It is where raw, foraged material land
 
 Bundled foragers:
 
-| Paradigm        | What it finds                                                                                   |
-| --------------- | ----------------------------------------------------------------------------------------------- |
-| `pi-extension`  | Packages depending on `@earendil-works/pi-coding-agent` + loose `.ts/.mjs/.js` extension files. |
+| Paradigm        | What it finds                                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `pi-extension`  | Packages depending on `@earendil-works/pi-coding-agent` + loose `.ts/.mjs/.js` extension files.                |
+| `claude-skill`  | Directories containing a `SKILL.md` file (Claude Code / Anthropic Skills format).                              |
+| `mcp-config`    | `mcp.json`, `.mcp.json`, `claude_desktop_config.json`, `mcp.config.json`, plus any JSON with `mcpServers`.     |
+| `agent-md`      | Per-directory agent instructions: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `copilot-instructions.md`. |
+| `raw-markdown`  | Free-form `.md` / `.mdx` not claimed by another paradigm; project docs (README/LICENSE/CHANGELOG/…) are skipped. |
 
 Phase ① is intentionally LLM-free. It runs fast and is safe to re-run nightly across many roots.
+
+The walker skips `node_modules`, `.git`, `dist`, `build`, and other always-skip directories — including hidden directories by default. That means files under `.github/`, `.claude/`, `.cursor/`, etc. are not currently picked up; widening the walker is a follow-up if/when it matters.
 
 ### Phases ② / ③ / ④ — coming in Track 2
 
