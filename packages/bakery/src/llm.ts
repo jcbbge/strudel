@@ -84,16 +84,20 @@ Return a JSON array of 3-6 short snake_case tags that describe the ingredient's 
 Name: ${input.name}
 Flavor: ${input.flavor}
 ${input.description ? `Description: ${input.description}\n` : ""}
-Respond with ONLY the JSON array, e.g. ["http","scraping","retry"].`;
+Output format: a JSON array of strings, nothing else. The tags MUST describe THIS ingredient, not the format example.`;
 		try {
 			const response = await this.callJson(`${this.baseUrl}/chat/completions`, {
 				model: this.chatModel,
 				messages: [{ role: "user", content: prompt }],
-				max_tokens: 128,
+				// Reasoning models (e.g. Qwen3) emit a <think>…</think> block first;
+				// give them headroom for the chain-of-thought + the JSON answer.
+				max_tokens: 1024,
 				temperature: 0,
 			});
-			const text =
+			const raw =
 				(response as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? "";
+			// Strip reasoning-model think blocks before extracting the JSON array.
+			const text = raw.replace(/<think>[\s\S]*?<\/think>/g, "");
 			const match = text.match(/\[[\s\S]*?\]/);
 			if (!match) return undefined;
 			const parsed = JSON.parse(match[0]) as unknown;
