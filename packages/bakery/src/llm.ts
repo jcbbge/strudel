@@ -8,11 +8,22 @@
 
 import type { IngredientKind } from "./types.js";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1";
+const DEFAULT_BASE_URL = "http://127.0.0.1:10240/v1";
 const DEFAULT_CHAT_MODEL = "mlx-community/Qwen3-8B-4bit";
 const DEFAULT_EMBEDDING_MODEL = "mlx-community/Qwen3-Embedding-4B-4bit-DWQ";
 const PROBE_TIMEOUT_MS = 800;
-const CALL_TIMEOUT_MS = 30_000;
+const CALL_TIMEOUT_MS = 90_000;
+
+/** Combine the LLM's "reasoning" line and "kind_evidence" quote into one
+ * displayable string. Either may be missing; both are best-effort. */
+function composeReasoning(reasoning: unknown, evidence: unknown): string | undefined {
+	const r = typeof reasoning === "string" ? reasoning.trim() : "";
+	const e = typeof evidence === "string" ? evidence.trim() : "";
+	if (r && e) return `${r}  [evidence: ${e}]`;
+	if (r) return r;
+	if (e) return `evidence: ${e}`;
+	return undefined;
+}
 
 export interface LocalLlmOptions {
 	baseUrl?: string;
@@ -95,6 +106,9 @@ Output format: a JSON array of strings, nothing else. The tags MUST describe THI
 				// give them headroom for the chain-of-thought + the JSON answer.
 				max_tokens: 1024,
 				temperature: 0,
+				// mlx-omni-server eagerly parses Qwen3 tool-call tokens and drops
+				// content. Force "none" so non-streaming responses keep their text.
+				tool_choice: "none",
 			});
 			const raw =
 				(response as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? "";
@@ -141,44 +155,94 @@ Output format: a JSON array of strings, nothing else. The tags MUST describe THI
 		| undefined
 	> {
 		if (!(await this.isAvailable())) return undefined;
-		const meta = input.adapter_meta ? JSON.stringify(input.adapter_meta) : "(none)";
-		const prompt = `You are the cupboard-curator in a coding-agent bakery. Classify ONE foraged candidate.
+		const meta = input.adapter_meta ?? {};
+		const upstreamName =
+			typeof meta.frontmatter_name === "string"
+				? meta.frontmatter_name
+				: typeof meta.name === "string"
+					? meta.name
+					: undefined;
+		const upstreamDescription =
+			typeof meta.frontmatter_description === "string"
+				? meta.frontmatter_description
+				: typeof meta.description === "string"
+					? meta.description
+					: undefined;
+		const filename = input.source_path.split(/[\\/]/).pop() ?? input.source_path;
+		const prompt = `You are the cupboard-curator in a coding-agent bakery. Classify ONE foraged candidate into a Pantry ingredient.
 
-The Pantry knows nine ingredient kinds:
-  - directive: prompt prefix / persona / always-on instruction
+# Nine ingredient kinds
+  - directive: prompt prefix / persona / always-on instruction loaded at agent start
   - command:   slash command or scripted shortcut
   - skill:     bundled how-to with optional resources (Claude Skills, etc.)
   - hook:      script run on a lifecycle event
-  - tool:      callable function exposed to the agent
+  - tool:      callable function exposed to the agent (a single function with a schema)
   - mcp:       Model Context Protocol server config / entry
   - plugin:    extension package that registers tools/commands/hooks
   - agent:     a top-level agent definition
   - subagent:  a delegated agent with a focused role
 
-Candidate metadata:
-  paradigm:     ${input.paradigm}
-  source_path:  ${input.source_path}
-  content_size: ${input.content_size} bytes
-  adapter_meta: ${meta}
+# Deterministic rubric — apply FIRST, only reason if no rule fires
+  - paradigm = claude-skill, OR file is SKILL.md with name+description frontmatter under a skills/ dir → kind = skill
+  - paradigm = mcp-config, OR file contains "mcpServers" key → kind = mcp
+  - paradigm = pi-extension → kind = plugin
+  - paradigm = agent-md, OR file is AGENTS.md / AGENT.md → kind = directive
+  - paradigm = raw-markdown → kind = directive (but consider skill if it reads as a how-to)
+  - shell script under hooks/ or with lifecycle event names (pre-commit, on-save) → kind = hook
+
+# Identifier preservation rules
+  - If "upstream_name" is provided below, use it as the basis for "name". Lowercase, replace non-alphanumerics with underscores, prefix with "<kind>." (e.g. "emil-design-eng" → "skill.emil_design_eng"). DO NOT invent a new identifier.
+  - If "upstream_description" is provided, weave it into "flavor" and "description" — that is the author's own statement of what this is.
+
+# Output rules
+  - "name": snake_case, prefixed with kind ("skill.emil_design_eng"), preserves upstream identifier when present.
+  - "flavor": <= 140 chars, ONE line, describes what makes THIS candidate distinctive (author, surface, behavioral contract). Avoid generic phrases like "provides X for Y".
+  - "description": 1–3 sentences, names concrete sections / behaviors / topics from the content.
+  - "tags": EXACTLY 3–6 short snake_case tags. MUST NOT echo the name OR the kind. Cover orthogonal axes — domain (ui, backend, data), tech (css, react, sql), surface (review, generation, debugging).
+  - "dependencies": ONLY other Pantry ingredient names this candidate requires at runtime. NPM packages mentioned in code samples are NOT dependencies. Default: [].
+  - "confidence": "high" if the rubric fired or path+frontmatter are decisive; "medium" if multi-signal but ambiguous; "low" if you guessed.
+  - "reasoning": ONE line, cite the specific signal (path shape, frontmatter key, paradigm, content section).
+  - "kind_evidence": quote the EXACT substring (<= 80 chars) from the content or metadata that triggered the kind decision.
+
+# One-shot example
+
+Input:
+  paradigm:              claude-skill
+  source_path:           /Users/x/.claude/skills/criticality/SKILL.md
+  filename:              SKILL.md
+  upstream_name:         criticality
+  upstream_description:  Recognize and operate at the edge of chaos.
+  content (excerpt):     "# Criticality\\n## Phase Transitions\\n..."
+
+Output:
+{
+  "kind": "skill",
+  "name": "skill.criticality",
+  "flavor": "Operate at the edge of chaos: phase-transition rubric for sustaining cognitive throughput without cascading.",
+  "description": "Reference how-to on neural-avalanche-style criticality applied to agent reasoning. Distinguishes subcritical / critical / supercritical states and gives heuristics for staying at the asymptote.",
+  "tags": ["cognition", "rubric", "meta_reasoning", "decision_making"],
+  "dependencies": [],
+  "confidence": "high",
+  "reasoning": "Rubric matched: paradigm=claude-skill + SKILL.md + frontmatter name/description present.",
+  "kind_evidence": "paradigm=claude-skill, SKILL.md frontmatter: name: criticality"
+}
+
+# This candidate
+
+  paradigm:              ${input.paradigm}
+  source_path:           ${input.source_path}
+  filename:              ${filename}
+  content_size:          ${input.content_size} bytes
+  upstream_name:         ${upstreamName ?? "(none)"}
+  upstream_description:  ${upstreamDescription ?? "(none)"}
+  adapter_meta:          ${JSON.stringify(meta)}
 
 Content (truncated):
 """
 ${input.content}
 """
 
-Decide:
-  1. The most appropriate "kind" (one of the nine above).
-  2. A short snake_case "name" — usually "<kind>.<slug>".
-  3. A one-line "flavor" (<= 140 chars) describing what it does.
-  4. An optional longer "description".
-  5. 3–6 short snake_case "tags" describing purpose / domain.
-  6. Optional "dependencies" (other ingredient names this needs).
-  7. Confidence: "low" / "medium" / "high".
-  8. A one-line "reasoning" note.
-
-Return ONE JSON object matching this shape, nothing else:
-{ "kind": "...", "name": "...", "flavor": "...", "description": "...",
-  "tags": ["..."], "dependencies": [], "confidence": "...", "reasoning": "..." }`;
+Return ONE JSON object matching the example's shape, nothing else.`;
 
 		try {
 			const response = await this.callJson(`${this.baseUrl}/chat/completions`, {
@@ -186,6 +250,9 @@ Return ONE JSON object matching this shape, nothing else:
 				messages: [{ role: "user", content: prompt }],
 				max_tokens: 2048,
 				temperature: 0,
+				// mlx-omni-server eagerly parses Qwen3 tool-call tokens and drops
+				// content. Force "none" so non-streaming responses keep their text.
+				tool_choice: "none",
 			});
 			const raw =
 				(response as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ?? "";
@@ -226,7 +293,7 @@ Return ONE JSON object matching this shape, nothing else:
 					? parsed.dependencies.filter((d): d is string => typeof d === "string")
 					: undefined,
 				confidence,
-				reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : undefined,
+				reasoning: composeReasoning(parsed.reasoning, parsed.kind_evidence),
 			};
 		} catch {
 			return undefined;

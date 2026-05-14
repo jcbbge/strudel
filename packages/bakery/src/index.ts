@@ -218,12 +218,56 @@ function formatRecommendation(
 	return lines.join("\n");
 }
 
-export default function bakeryExtension(pi: ExtensionAPI): void {
+/**
+ * Auto-discover chat models from a local OpenAI-compatible MLX server and
+ * register them under the `mlx-local` provider. Embedding-only models are
+ * filtered out. If the server is unreachable we fail open: the bakery still
+ * loads, the user just gets the default cloud providers.
+ */
+async function registerLocalMlxProvider(pi: ExtensionAPI, baseUrl: string): Promise<void> {
+	const trimmed = baseUrl.replace(/\/$/, "");
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 1500);
+		let response: Response;
+		try {
+			response = await fetch(`${trimmed}/models`, { signal: controller.signal });
+		} finally {
+			clearTimeout(timer);
+		}
+		if (!response.ok) return;
+		const payload = (await response.json()) as { data?: Array<{ id: string; owned_by?: string }> };
+		const all = payload.data ?? [];
+		const chatModels = all.filter((m) => !/embedding/i.test(m.id));
+		if (chatModels.length === 0) return;
+		pi.registerProvider("mlx-local", {
+			name: "MLX (local)",
+			baseUrl: trimmed,
+			apiKey: "local",
+			api: "openai-completions",
+			models: chatModels.map((m) => ({
+				id: m.id,
+				name: m.id,
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 32768,
+				maxTokens: 4096,
+			})),
+		});
+	} catch {
+		// MLX server not reachable — skip provider registration.
+	}
+}
+
+export default async function bakeryExtension(pi: ExtensionAPI): Promise<void> {
 	const surreal = new SurrealClient();
 	const llm = new LocalLlm();
 	const pantry = new Pantry({ surreal, llm });
 	const cupboard = new Cupboard({ surreal });
 	const curator = new Curator({ pantry, cupboard, llm });
+
+	await registerLocalMlxProvider(pi, llm.info.baseUrl);
 
 	pi.on("before_agent_start", (event) => {
 		return { systemPrompt: `${MASTER_BAKER_IDENTITY}\n\n${event.systemPrompt}` };
