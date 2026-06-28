@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pi — Internals &amp; Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,500;6..12,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0d0c0b; --bg-alt:#161514; --ink:#e8e4dc; --muted:#9a948a;
+    --faint:#55504a; --accent:#c49a6c; --accent-2:#6f8fc0; --rule:#2c2925;
+    --disp:"Sora",system-ui,sans-serif;
+    --body:"Nunito Sans",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--body)}
+  body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+  .deck{position:fixed;inset:0;overflow:hidden}
+  .track{display:flex;height:100%;width:100%;
+    transition:transform .65s cubic-bezier(.34,1.12,.64,1)}
+  .slide{position:relative;flex:0 0 100vw;height:100%;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:clamp(2rem,7vw,9rem);overflow:hidden}
+  .slide.alt{background:var(--bg-alt)}
+
+  .inner{max-width:62rem;width:100%;z-index:2}
+
+  .kicker{font-family:var(--mono);font-size:.72rem;letter-spacing:.28em;
+    text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:.9rem;margin-bottom:1.6rem}
+  .kicker .line{height:1px;width:3.2rem;background:var(--accent);transform-origin:left;display:inline-block}
+  .slide.active .kicker .line{animation:drawIn .8s cubic-bezier(.22,.61,.36,1) both .35s}
+
+  h1{font-family:var(--disp);font-weight:800;line-height:.95;letter-spacing:-.03em;
+    font-size:clamp(3rem,9vw,7.5rem)}
+  h2{font-family:var(--disp);font-weight:700;line-height:1.02;letter-spacing:-.02em;
+    font-size:clamp(2rem,5vw,3.7rem)}
+  .lede{font-size:clamp(1.15rem,2vw,1.6rem);line-height:1.45;color:var(--muted);
+    max-width:42rem;margin-top:1.6rem;font-weight:400}
+  p.body{font-size:clamp(1rem,1.4vw,1.18rem);line-height:1.6;color:var(--ink);max-width:40rem;margin-top:1.2rem;font-weight:400}
+  .accent{color:var(--accent)}
+  .a2{color:var(--accent-2)}
+  em{color:var(--ink);font-style:italic}
+  strong{font-weight:600;color:var(--ink)}
+
+  .map{font-family:var(--mono);font-size:clamp(.7rem,1.05vw,.92rem);line-height:1.9;color:var(--muted);
+    margin-top:1.8rem;border-left:2px solid var(--accent);padding-left:1.2rem}
+  .map b{color:var(--ink);font-weight:500}
+  .map .acc{color:var(--accent)}
+
+  .fieldmap{margin-top:1.8rem;width:100%;border-collapse:collapse}
+  .fieldmap td{padding:.62rem 0;border-bottom:1px solid var(--rule);vertical-align:top;font-size:clamp(.85rem,1.2vw,1.02rem);line-height:1.4}
+  .fieldmap td:first-child{font-family:var(--mono);color:var(--accent);white-space:nowrap;padding-right:1.6rem;font-size:.86em}
+  .fieldmap td:last-child{color:var(--muted)}
+  .fieldmap tr td .star{color:var(--accent-2);font-weight:600}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:clamp(1.2rem,3vw,3rem);margin-top:1.8rem}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--rule);border-radius:4px;padding:1.3rem 1.4rem;background:rgba(255,255,255,.012)}
+  .card h3{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:.7rem;font-weight:500}
+  .card p{font-size:.98rem;line-height:1.55;color:var(--muted)}
+  .card p b{color:var(--ink);font-weight:600}
+
+  .callout{margin-top:1.8rem;background:rgba(111,143,192,.07);border-left:4px solid var(--accent-2);
+    padding:1.1rem 1.3rem;border-radius:0 4px 4px 0;max-width:44rem}
+  .callout .tag{font-family:var(--mono);font-size:.66rem;letter-spacing:.18em;text-transform:uppercase;color:var(--accent-2);display:block;margin-bottom:.5rem}
+  .callout p{font-size:1.02rem;line-height:1.55;color:var(--ink)}
+
+  .quote{font-family:var(--disp);font-weight:700;font-size:clamp(1.8rem,4.4vw,3.4rem);line-height:1.12;letter-spacing:-.02em;max-width:48rem}
+  .attr{font-family:var(--mono);font-size:.8rem;letter-spacing:.12em;color:var(--accent);margin-top:1.6rem;text-transform:uppercase}
+
+  .eco{font-family:var(--mono);font-size:clamp(.66rem,1vw,.86rem);line-height:1.65;color:var(--muted);white-space:pre;margin-top:1.6rem;overflow-x:auto}
+  .eco b{color:var(--ink)} .eco .acc{color:var(--accent)}
+
+  .ghost{position:absolute;font-family:var(--disp);font-weight:800;color:var(--ink);
+    opacity:.04;font-size:46vw;line-height:.7;right:-2vw;bottom:-9vw;pointer-events:none;z-index:1;user-select:none}
+  .slide.active .ghost{animation:ghostDrift 13s ease-in-out infinite alternate}
+
+  .corner{position:absolute;top:clamp(1.4rem,4vw,3rem);right:clamp(1.4rem,4vw,3rem);opacity:.5;z-index:2}
+
+  /* entries */
+  .slide.active .e1{animation:fadeUp .6s ease both .10s}
+  .slide.active .e2{animation:fadeUp .6s ease both .22s}
+  .slide.active .e3{animation:fadeUp .6s ease both .34s}
+  .slide.active .e4{animation:fadeUp .6s ease both .46s}
+  .slide.active .e5{animation:fadeUp .6s ease both .58s}
+  .breathe{animation:breathe 4.5s ease-in-out infinite}
+
+  @keyframes fadeUp{from{opacity:0;transform:translateY(13px)}to{opacity:1;transform:none}}
+  @keyframes drawIn{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  @keyframes ghostDrift{from{transform:translateY(0) scale(1)}to{transform:translateY(-8px) scale(1.012)}}
+  @keyframes breathe{0%,100%{opacity:.86}50%{opacity:1}}
+
+  /* chrome */
+  .counter{position:fixed;bottom:1.5rem;left:clamp(1.5rem,5vw,3rem);font-family:var(--mono);
+    font-size:.74rem;letter-spacing:.1em;color:var(--muted);z-index:20}
+  .counter .cur{color:var(--accent)}
+  .dots{position:fixed;bottom:1.5rem;right:clamp(1.5rem,5vw,3rem);display:flex;gap:.55rem;z-index:20}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--faint);border:none;padding:0;cursor:pointer;transition:transform .3s,background .3s}
+  .dot.on{background:var(--accent);transform:scale(1.35)}
+  .hint{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);font-family:var(--mono);
+    font-size:.68rem;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);z-index:20;transition:opacity .5s}
+  .hint.hide{opacity:0}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+    .track{transition:none}
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+  <div class="track" id="track">
+
+    <!-- 1 COVER -->
+    <section class="slide active">
+      <div class="ghost">π</div>
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>Internals &amp; Architecture · companion deck</div>
+        <h1>Pi.</h1>
+        <p class="lede">The minimal agent harness that <span class="accent breathe">strudel</span> is built on — traced from process start to provider call, and where an extension hooks in.</p>
+      </div>
+    </section>
+
+    <!-- 2 EPIGRAPH -->
+    <section class="slide alt">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>The philosophy</div>
+        <p class="quote e1">&ldquo;A minimal agent harness. <span class="accent">Adapt Pi to your workflows</span>, not the other way around.&rdquo;</p>
+        <p class="body e2">Pi's stated design goal is <em>extensibility as primitives, not bundled features</em> — features other agents bake in, you build yourself. That is not a footnote. It is the entire reason strudel can exist as an extension rather than a fork.</p>
+        <p class="attr e3">— pi.dev · Mario Zechner / Earendil Works · MIT</p>
+      </div>
+    </section>
+
+    <!-- 3 THE SHAPE -->
+    <section class="slide">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>The shape in one breath</div>
+        <h2 class="e1">Four packages. A pure core, an extensible shell.</h2>
+        <p class="body e2">A strictly layered TypeScript monorepo. The loop at the bottom is a <strong>pure, side-effect-free event emitter</strong> — it takes a context snapshot, streams a response, runs tools, emits typed events. Everything that touches the world — persistence, extensions, compaction, UI — lives in the shell that <em>subscribes</em> to those events.</p>
+        <div class="grid2 e3">
+          <div class="card"><h3>core (agent-core)</h3><p><b>The loop.</b> Stateless. No <span class="accent">this</span>, no I/O. Emits the events everything else listens to.</p></div>
+          <div class="card"><h3>ai</h3><p><b>One call boundary.</b> <span class="accent">streamSimple()</span> — every provider behind a single streaming protocol.</p></div>
+          <div class="card"><h3>coding-agent</h3><p><b>The shell.</b> Session, extensions, compaction, skills, <span class="accent">pi install</span>, TUI wiring. The seam lives here.</p></div>
+          <div class="card"><h3>tui</h3><p><b>Replaceable.</b> Terminal-UI primitives. The loop never imports it.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 LIFECYCLE -->
+    <section class="slide alt">
+      <svg class="corner" width="42" height="42" viewBox="0 0 42 42"><path d="M0 42 L0 0 L42 0" fill="none" stroke="var(--accent)" stroke-width="1" stroke-dasharray="84" stroke-dashoffset="84"><animate attributeName="stroke-dashoffset" to="0" dur="1.2s" begin="0.4s" fill="freeze" calcMode="spline" keySplines="0.22 0.61 0.36 1"/></path></svg>
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>One turn, start to end</div>
+        <h2 class="e1">From a keystroke to the model and back.</h2>
+        <div class="map e2">
+<b>cli.ts</b> → main() → <b>AgentSession.prompt()</b>            <span class="acc">// the per-turn entry</span>
+  ├ emitInput()                        <span class="acc">// ext: transform input</span>
+  ├ expand skills / templates
+  ├ <b>emitBeforeAgentStart()</b>           <span class="acc">// ext: ★ rewrite system prompt</span>
+  └ agent.prompt() → <b>runAgentLoop()</b>   <span class="acc">// agent-core, pure</span>
+        ├ transformContext()           <span class="acc">// ext: ★ context</span>
+        ├ <b>streamSimple()</b>             <span class="acc">// ai: the one HTTP call</span>
+        ├ beforeToolCall()             <span class="acc">// ext: ★ tool_call</span>
+        ├ tool.execute()
+        └ afterToolCall()              <span class="acc">// ext: ★ tool_result</span>
+  events ⟲ processEvents() → session → <b>appendMessage()</b>  <span class="acc">// JSONL, per message</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 KERNEL -->
+    <section class="slide">
+      <div class="ghost">↺</div>
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>The kernel</div>
+        <h2 class="e1">The loop is pure.<br/>The shell is not.</h2>
+        <p class="body e2">This single boundary explains the whole codebase. <span class="accent">agent-loop.ts</span> has no class, no state, no file access — it receives a snapshot and emits events. Persistence, UI, and <em>every extension hook</em> live in the subscribers. That is why a turn is testable with a fake stream, why the UI is swappable across interactive / print / RPC unchanged, and why an extension can reshape a turn without ever touching the engine.</p>
+        <div class="callout e3"><span class="tag">why it matters for strudel</span><p>Strudel never modifies the loop. It lives entirely in the subscriber layer — which is exactly why it can be a clean extension, and why it <strong>physically cannot sprawl into the runtime</strong> the way the lab did.</p></div>
+      </div>
+    </section>
+
+    <!-- 6 ECOSYSTEM -->
+    <section class="slide alt">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>How the packages compose</div>
+        <h2 class="e1">Dependencies point one way: down.</h2>
+        <div class="eco e2">
+        <b>@strudel/coding-agent</b>   <span class="acc">·</span> cli → AgentSession
+              │   │   │          extensions · compaction · skills
+        ┌─────┘   │   └─────┐    sessions · settings · pi install
+        ▼         ▼         ▼
+  <b>agent-core</b>     <b>ai</b>        <b>tui</b>
+   Agent·loop   streamSimple   Component·Editor
+        │       providers      Overlay·Themes
+        └──▶ ai  model/tools   <span class="acc">(standalone)</span>
+        </div>
+        <p class="body e3">coding-agent depends on all three; agent-core depends on ai; tui and ai stand alone. An extension author <strong>uses</strong> coding-agent (the seam) and takes <em>types only</em> from the rest.</p>
+      </div>
+    </section>
+
+    <!-- 7 THE SEAM -->
+    <section class="slide">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>The extension seam · ★ = can mutate the turn</div>
+        <h2 class="e1">~25 hooks. A handful change everything.</h2>
+        <table class="fieldmap e2">
+          <tr><td>input</td><td><span class="star">★</span> transform or swallow the user's text before anything sees it</td></tr>
+          <tr><td>before_agent_start</td><td><span class="star">★</span> <b>rewrite the system prompt</b> · inject context messages — strudel's main hook</td></tr>
+          <tr><td>context</td><td><span class="star">★</span> rewrite the message array before each LLM call (RAG, distillation)</td></tr>
+          <tr><td>tool_call</td><td><span class="star">★</span> patch arguments or block a tool outright</td></tr>
+          <tr><td>tool_result</td><td><span class="star">★</span> transform a result before the model sees it</td></tr>
+          <tr><td>message_end</td><td><span class="star">★</span> post-process finalized output</td></tr>
+          <tr><td>turn_* / message_* / tool_execution_*</td><td>observe only — the telemetry surface</td></tr>
+        </table>
+        <p class="body e3">Plus capabilities: <span class="accent">registerTool</span>, <span class="accent">setActiveTools</span> (lock the surface), <span class="accent">registerProvider</span>, <span class="accent">exec</span>. Extensions load via <span class="accent">jiti</span> from <span class="mono">.pi/extensions/</span>; <span class="accent">pi install npm:… / git:…</span> distributes them.</p>
+      </div>
+    </section>
+
+    <!-- 8 NATIVE PRIMITIVES -->
+    <section class="slide alt">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>What Pi already does — and where it breaks</div>
+        <h2 class="e1">Skills are dumped into the prompt. All of them.</h2>
+        <p class="body e2">Pi discovers every skill and injects them into the system prompt as <span class="mono accent">&lt;available_skills&gt;</span> XML — name, description, location — <em>every turn</em>. The model is told to <span class="accent">read</span> the file when relevant. Skills are <strong>text-injection, not execution</strong>.</p>
+        <div class="callout e3"><span class="tag">this is the thesis, confirmed in the source</span><p>That dump-everything mechanism is <strong>exactly what breaks at scale</strong> — 100 skills in the prompt, the agent reaches for the same five. Strudel doesn't rebuild skills; it <strong>replaces the selection mechanism</strong>. Also confirmed: tools merge via <span class="mono">registerTool</span>; slash-commands are code or text macros; <strong>no native MCP</strong> in 0.74 — that's open territory.</p></div>
+      </div>
+    </section>
+
+    <!-- 9 DESIGN PRINCIPLES -->
+    <section class="slide">
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>What Mario optimized for</div>
+        <h2 class="e1">The principles, read off the architecture.</h2>
+        <div class="grid2 e2">
+          <div class="card"><h3>pure loop, dirty shell</h3><p>Side effects live only in event subscribers. The engine stays a function.</p></div>
+          <div class="card"><h3>extensions first-class</h3><p>Every observable moment is a typed hook. Extensions can even <b>provide resources</b>.</p></div>
+          <div class="card"><h3>one provider boundary</h3><p><span class="accent">streamSimple()</span> is the sole LLM call site. Wire format never leaks into the loop.</p></div>
+          <div class="card"><h3>the JSONL is the truth</h3><p>Each message streamed to disk on finish. Survives a mid-turn crash; rebuilt on open.</p></div>
+          <div class="card"><h3>stale-aware context</h3><p>Extension handles throw after reload instead of dangling. Bugs die loudly.</p></div>
+          <div class="card"><h3>UI is replaceable noise</h3><p>One session class across interactive / print / RPC. The UI is wiring at the top.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 STRUDEL HOOKS -->
+    <section class="slide alt">
+      <svg class="corner" width="42" height="42" viewBox="0 0 42 42"><path d="M42 0 L42 42 L0 42" fill="none" stroke="var(--accent-2)" stroke-width="1" stroke-dasharray="84" stroke-dashoffset="84"><animate attributeName="stroke-dashoffset" to="0" dur="1.2s" begin="0.4s" fill="freeze" calcMode="spline" keySplines="0.22 0.61 0.36 1"/></path></svg>
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>So — where strudel bolts on</div>
+        <h2 class="e1">Five hooks, zero fork.</h2>
+        <table class="fieldmap e2">
+          <tr><td>before_agent_start</td><td>replace Pi's <em>dump-all-skills</em> with the Pantry gateway · <b>setActiveTools</b> to lock the surface</td></tr>
+          <tr><td>registerTool ×3</td><td><span class="a2">strudel_search</span> · <span class="a2">strudel_prep</span> · <span class="a2">strudel_bake</span> — the gateway</td></tr>
+          <tr><td>context</td><td>inject the <em>distilled, relevant</em> recipe — not the whole catalog</td></tr>
+          <tr><td>telemetry ext</td><td>subscribe to the lifecycle → JSONL → visualizer · no runtime change</td></tr>
+          <tr><td>MCP as a kind</td><td>not native — strudel treats it as a Pantry primitive through the gateway</td></tr>
+        </table>
+        <p class="body e3">Strudel runs against whatever Pi the user installed (<span class="mono">@earendil-works/pi-coding-agent</span>). <strong>Whatever Pi ships, strudel ships.</strong></p>
+      </div>
+    </section>
+
+    <!-- 11 CODA -->
+    <section class="slide">
+      <div class="ghost">∎</div>
+      <div class="inner">
+        <div class="kicker"><span class="line"></span>Coda</div>
+        <h2 class="e1">The right host was already built.</h2>
+        <p class="lede e2">Pi gives strudel the cognition layer — providers, sessions, the pure loop, the extension API — and asks for nothing back but a well-behaved extension. The pantry goes on top. Nothing forked, nothing rebuilt, the host upgrades underneath you.</p>
+        <p class="body e3"><span class="accent breathe">Adapt Pi to your workflows.</span> That is the whole permission slip. Strudel is what you build with it.</p>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="counter"><span class="cur" id="cur">01</span> / <span id="total">11</span></div>
+<div class="dots" id="dots"></div>
+<div class="hint" id="hint">← → / swipe / scroll</div>
+
+<script>
+(function(){
+  var track=document.getElementById('track');
+  var slides=Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var dotsWrap=document.getElementById('dots');
+  var cur=document.getElementById('cur');
+  var hint=document.getElementById('hint');
+  document.getElementById('total').textContent=String(slides.length).padStart(2,'0');
+  var i=0, lock=false;
+
+  slides.forEach(function(_,n){
+    var b=document.createElement('button');
+    b.className='dot'+(n===0?' on':'');
+    b.setAttribute('aria-label','Go to slide '+(n+1));
+    b.addEventListener('click',function(){go(n)});
+    dotsWrap.appendChild(b);
+  });
+  var dots=Array.prototype.slice.call(dotsWrap.children);
+
+  function go(n){
+    n=Math.max(0,Math.min(slides.length-1,n));
+    if(n===i) return;
+    i=n;
+    track.style.transform='translateX(-'+(i*100)+'vw)';
+    slides.forEach(function(s,k){s.classList.toggle('active',k===i)});
+    dots.forEach(function(d,k){d.classList.toggle('on',k===i)});
+    cur.textContent=String(i+1).padStart(2,'0');
+    if(i>0) hint.classList.add('hide'); else hint.classList.remove('hide');
+  }
+  function next(){go(i+1)} function prev(){go(i-1)}
+
+  window.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){e.preventDefault();next()}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();prev()}
+    else if(e.key==='Home'){go(0)} else if(e.key==='End'){go(slides.length-1)}
+  });
+
+  var wlock=false;
+  window.addEventListener('wheel',function(e){
+    if(wlock) return;
+    if(Math.abs(e.deltaX)>Math.abs(e.deltaY)){
+      if(e.deltaX>8){wlock=true;next();setTimeout(function(){wlock=false},700)}
+      else if(e.deltaX<-8){wlock=true;prev();setTimeout(function(){wlock=false},700)}
+    } else {
+      if(e.deltaY>14){wlock=true;next();setTimeout(function(){wlock=false},700)}
+      else if(e.deltaY<-14){wlock=true;prev();setTimeout(function(){wlock=false},700)}
+    }
+  },{passive:true});
+
+  var sx=0,sy=0;
+  window.addEventListener('touchstart',function(e){sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});
+  window.addEventListener('touchend',function(e){
+    var dx=e.changedTouches[0].clientX-sx, dy=e.changedTouches[0].clientY-sy;
+    if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)){ dx<0?next():prev() }
+  },{passive:true});
+})();
+</script>
+</body>
+</html>
