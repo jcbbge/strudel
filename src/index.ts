@@ -29,6 +29,13 @@ import {
 	indexRoots,
 	lexicalSearch,
 } from "./pantry.js";
+import {
+	type SurfaceMode,
+	baselineTools,
+	computeActiveSurface,
+	pruneToolsSection,
+	stripSkillsBlock,
+} from "./surface.js";
 
 const STRUDEL_VERSION = "0.0.0";
 const DEFAULT_ROOTS = ["~/.pi/agent"];
@@ -37,6 +44,8 @@ const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 interface StrudelConfig {
 	roots: string[];
 	embeddings?: EmbeddingConfig;
+	surface: SurfaceMode;
+	baseline?: string[];
 }
 
 async function loadConfig(): Promise<StrudelConfig> {
@@ -45,14 +54,18 @@ async function loadConfig(): Promise<StrudelConfig> {
 		const parsed = JSON.parse(await readFile(cfgPath, "utf-8")) as {
 			pantry?: { roots?: string[] };
 			embeddings?: EmbeddingConfig;
+			surface?: SurfaceMode;
+			baseline?: string[];
 		};
 		const roots = parsed.pantry?.roots;
 		return {
 			roots: Array.isArray(roots) && roots.length > 0 ? roots : DEFAULT_ROOTS,
 			embeddings: parsed.embeddings,
+			surface: parsed.surface === "strict" ? "strict" : "pragmatic",
+			baseline: parsed.baseline,
 		};
 	} catch {
-		return { roots: DEFAULT_ROOTS };
+		return { roots: DEFAULT_ROOTS, surface: "pragmatic" };
 	}
 }
 
@@ -69,8 +82,29 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		? `semantic (${config.embeddings.model})`
 		: "lexical";
 	console.error(
-		`[strudel ${STRUDEL_VERSION}] pantry: ${fileIndex.length} file-primitives from ${config.roots.length} roots (${kindSummary}) | search: ${searchMode}`,
+		`[strudel ${STRUDEL_VERSION}] pantry: ${fileIndex.length} file-primitives from ${config.roots.length} roots (${kindSummary}) | search: ${searchMode} | surface: ${config.surface}`,
 	);
+
+	const baseline = baselineTools(config.surface, config.baseline);
+	// Code primitives strudel has surfaced this session — kept active so the
+	// agent can call them after discovering them (curate-and-run).
+	const activated = new Set<string>();
+
+	// Make strudel the default discovery path: each turn, lock the tool surface
+	// to baseline + what's been surfaced, and strip Pi's dump-everything skills
+	// block in favor of a pointer to strudel_search.
+	pi.on("before_agent_start", async (event) => {
+		const available = new Set(pi.getAllTools().map((t) => t.name));
+		const active = computeActiveSurface(baseline, [...activated], available);
+		pi.setActiveTools(active);
+		// Lock execution (setActiveTools) AND the prompt the agent reads: strip the
+		// skills dump and prune the "Available tools" list to the active set.
+		const systemPrompt = pruneToolsSection(
+			stripSkillsBlock(event.systemPrompt),
+			new Set(active),
+		);
+		return { systemPrompt };
+	});
 
 	pi.registerTool({
 		name: "strudel_search",
@@ -124,6 +158,11 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				}
 			} else {
 				hits = lexicalSearch(all, params.query, 8);
+			}
+
+			// Curate-and-run: make the code-primitive hits callable next turn.
+			for (const h of hits) {
+				if (h.source === "runtime:tool") activated.add(h.name);
 			}
 
 			const fmtScore = (s: number): string =>

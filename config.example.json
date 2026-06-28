@@ -6,8 +6,10 @@
       "~/.config/opencode"
     ]
   },
+  "surface": "pragmatic",
+  "_surface_note": "How aggressively strudel locks the agent's tool surface each turn. 'pragmatic' (default): read/write/edit/bash + strudel_search stay active; everything else (skills, MCP tools, specialized tools) is discovered via the gateway. 'strict': only read + strudel_search. Or set \"baseline\": [\"read\",\"grep\",\"ls\"] to tune the always-on set exactly.",
   "embeddings": {
-    "_comment": "Optional (L1). Omit this whole block to use zero-infra lexical search. OpenAI-compatible: works with a local server, a hosted endpoint, or any provider via apiKey.",
+    "_comment": "Optional (L1). Omit this whole block for zero-infra lexical search. OpenAI-compatible: works with a local server, a hosted endpoint, or any provider via apiKey.",
     "baseUrl": "http://127.0.0.1:10240/v1",
     "model": "mlx-community/Qwen3-Embedding-4B-4bit-DWQ",
     "apiKey": ""
