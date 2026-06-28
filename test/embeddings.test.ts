@@ -115,6 +115,19 @@ describe("semanticSearch", () => {
 		expect(embed.embedded - before).toBe(1);
 	});
 
+	it("batches large pantries into multiple embed requests", async () => {
+		const many: Primitive[] = Array.from({ length: 70 }, (_, i) => ({
+			name: `s${i}`,
+			kind: "skill",
+			description: "x",
+			source: `p${i}`,
+		}));
+		const embed = makeFakeEmbedder();
+		await semanticSearch(many, "query", embed, tmpCache());
+		// 70 items → 2 batches (64 + 6), plus 1 query batch = 3 calls
+		expect(embed.calls).toBe(3);
+	});
+
 	it("returns empty for empty query or empty pantry", async () => {
 		const embed = makeFakeEmbedder();
 		expect(await semanticSearch(items, "  ", embed, tmpCache())).toEqual([]);

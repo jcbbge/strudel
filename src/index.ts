@@ -6,8 +6,9 @@
  *
  * The Pantry indexes configured roots (kind inferred from the subdirectory
  * name) + the live runtime registry. strudel_search ranks across all kinds:
- * L1 semantic when an embeddings endpoint is configured, else L0 lexical.
- * Kind-agnostic; not skills-specific.
+ * L1 semantic when an embeddings endpoint is configured, else L0 lexical. Each
+ * turn the agent's tool surface is locked to a baseline (everything else is
+ * discovered via the gateway) and Pi's dump-everything prompt sections are pruned.
  *
  * Run locally:  pi -e src/index.ts -p "..."
  * Config:       ~/.strudel/config.json
@@ -18,17 +19,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-	type EmbeddingConfig,
-	httpEmbedder,
-	semanticSearch,
-} from "./embeddings.js";
-import {
-	type Primitive,
-	type Ranked,
-	indexRoots,
-	lexicalSearch,
-} from "./pantry.js";
+import type { EmbeddingConfig } from "./embeddings.js";
+import { type Primitive, indexRoots } from "./pantry.js";
+import { search } from "./search.js";
 import {
 	type SurfaceMode,
 	baselineTools,
@@ -40,6 +33,7 @@ import {
 const STRUDEL_VERSION = "0.0.0";
 const DEFAULT_ROOTS = ["~/.pi/agent"];
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
+const MAX_ACTIVATED = 24; // bound the session surface so it can't slowly re-bloat
 
 interface StrudelConfig {
 	roots: string[];
@@ -69,6 +63,24 @@ async function loadConfig(): Promise<StrudelConfig> {
 	}
 }
 
+/** The code-resident primitives Pi already has: tools + slash-commands. */
+function runtimePrimitives(pi: ExtensionAPI): Primitive[] {
+	return [
+		...pi.getAllTools().map((t) => ({
+			name: t.name,
+			kind: "tool",
+			description: t.description ?? "",
+			source: "runtime:tool",
+		})),
+		...pi.getCommands().map((c) => ({
+			name: c.name,
+			kind: "command",
+			description: c.description ?? "",
+			source: "runtime:command",
+		})),
+	];
+}
+
 export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	const config = await loadConfig();
 	const fileIndex = await indexRoots(config.roots);
@@ -86,19 +98,33 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	);
 
 	const baseline = baselineTools(config.surface, config.baseline);
-	// Code primitives strudel has surfaced this session — kept active so the
-	// agent can call them after discovering them (curate-and-run).
+	// Code primitives strudel has surfaced this session — kept active (bounded) so
+	// the agent can call them after discovering them (curate-and-run).
 	const activated = new Set<string>();
+	let warnedFormat = false;
 
-	// Make strudel the default discovery path: each turn, lock the tool surface
-	// to baseline + what's been surfaced, and strip Pi's dump-everything skills
-	// block in favor of a pointer to strudel_search.
+	// Make strudel the default discovery path: each turn, lock the tool surface to
+	// baseline + what's been surfaced, and prune Pi's dump-everything prompt
+	// sections (skills + tools) down to that surface.
 	pi.on("before_agent_start", async (event) => {
 		const available = new Set(pi.getAllTools().map((t) => t.name));
 		const active = computeActiveSurface(baseline, [...activated], available);
 		pi.setActiveTools(active);
-		// Lock execution (setActiveTools) AND the prompt the agent reads: strip the
-		// skills dump and prune the "Available tools" list to the active set.
+
+		// Suppression relies on Pi's prompt markers; warn once if they're gone
+		// (a Pi format change), rather than silently leaking. See ROADMAP — the
+		// clean fix is an upstream prompt-control hook.
+		if (
+			!warnedFormat &&
+			!event.systemPrompt.includes("Available tools:") &&
+			!event.systemPrompt.includes("<available_skills>")
+		) {
+			warnedFormat = true;
+			console.error(
+				"[strudel] warning: Pi prompt markers not found — format may have changed; surface suppression may be ineffective.",
+			);
+		}
+
 		const systemPrompt = pruneToolsSection(
 			stripSkillsBlock(event.systemPrompt),
 			new Set(active),
@@ -120,49 +146,20 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			}),
 		}),
 		async execute(_toolCallId, params) {
-			// File-indexed kinds + live runtime kinds (tools, MCP tools, commands).
-			const runtime: Primitive[] = [
-				...pi.getAllTools().map((t) => ({
-					name: t.name,
-					kind: "tool",
-					description: (t as { description?: string }).description ?? "",
-					source: "runtime:tool",
-				})),
-				...pi.getCommands().map((c) => ({
-					name: c.name,
-					kind: "command",
-					description: c.description ?? "",
-					source: "runtime:command",
-				})),
-			];
-			const all = [...fileIndex, ...runtime];
+			const all = [...fileIndex, ...runtimePrimitives(pi)];
+			const { hits, mode } = await search(all, params.query, {
+				embeddings: config.embeddings,
+				cachePath: CACHE_PATH,
+			});
 
-			let hits: Ranked[];
-			let mode = "lexical";
-			if (config.embeddings) {
-				try {
-					hits = await semanticSearch(
-						all,
-						params.query,
-						httpEmbedder(config.embeddings),
-						CACHE_PATH,
-						8,
-					);
-					mode = "semantic";
-				} catch (err) {
-					// Endpoint down / error — degrade gracefully, never break search.
-					console.error(
-						`[strudel] embeddings failed, falling back to lexical: ${err instanceof Error ? err.message : String(err)}`,
-					);
-					hits = lexicalSearch(all, params.query, 8);
-				}
-			} else {
-				hits = lexicalSearch(all, params.query, 8);
-			}
-
-			// Curate-and-run: make the code-primitive hits callable next turn.
+			// Curate-and-run: make surfaced code primitives callable next turn, bounded.
 			for (const h of hits) {
 				if (h.source === "runtime:tool") activated.add(h.name);
+			}
+			while (activated.size > MAX_ACTIVATED) {
+				const oldest = activated.values().next().value;
+				if (oldest === undefined) break;
+				activated.delete(oldest);
 			}
 
 			const fmtScore = (s: number): string =>

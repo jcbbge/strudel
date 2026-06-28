@@ -139,31 +139,41 @@ async function readPrimitive(
 		return undefined;
 	}
 
-	const fm = parseFrontmatter(raw);
+	const { fm, body } = splitFrontmatter(raw);
 	return {
 		name: fm.name ?? name,
 		kind,
-		description: fm.description ?? firstProse(raw) ?? "",
+		description: fm.description ?? firstProse(body) ?? "",
 		source: file,
 	};
 }
 
-function parseFrontmatter(raw: string): {
+interface Frontmatter {
 	name?: string;
 	description?: string;
-} {
-	const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-	if (!m) return {};
+}
+
+/**
+ * Split a file into its frontmatter (name/description) and body. The single
+ * place the `---` boundary is parsed — name, description, and the prose fallback
+ * all derive from this one split.
+ */
+function splitFrontmatter(raw: string): { fm: Frontmatter; body: string } {
+	const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+	if (!m) return { fm: {}, body: raw };
 	const block = m[1];
 	const get = (key: string): string | undefined => {
 		const r = block.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, "im"));
 		return r ? r[1].trim().replace(/^["']|["']$/g, "") : undefined;
 	};
-	return { name: get("name"), description: get("description") };
+	return {
+		fm: { name: get("name"), description: get("description") },
+		body: raw.slice(m[0].length),
+	};
 }
 
-function firstProse(raw: string): string | undefined {
-	const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+/** First non-heading, non-fence prose line of a body — the description fallback. */
+function firstProse(body: string): string | undefined {
 	for (const line of body.split("\n")) {
 		const t = line.trim();
 		if (t && !t.startsWith("#") && !t.startsWith("```")) return t.slice(0, 200);

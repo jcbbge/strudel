@@ -26,6 +26,7 @@ export interface EmbeddingConfig {
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 
 const REQUEST_TIMEOUT_MS = 60_000; // first call can cold-start a local model (3-10s+)
+const EMBED_BATCH = 64; // chunk large pantries so one request can't blow the timeout
 
 /** OpenAI-compatible embeddings client. */
 export function httpEmbedder(cfg: EmbeddingConfig): Embedder {
@@ -119,7 +120,11 @@ export async function semanticSearch(
 		if (!cache[keys[i]]) missIdx.push(i);
 	}
 	if (missIdx.length > 0) {
-		const vecs = await embed(missIdx.map((i) => texts[i]));
+		const missTexts = missIdx.map((i) => texts[i]);
+		const vecs: number[][] = [];
+		for (let b = 0; b < missTexts.length; b += EMBED_BATCH) {
+			vecs.push(...(await embed(missTexts.slice(b, b + EMBED_BATCH))));
+		}
 		missIdx.forEach((i, k) => {
 			cache[keys[i]] = vecs[k];
 		});
