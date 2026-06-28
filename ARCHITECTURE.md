@@ -30,6 +30,34 @@ always active. Forcing ambient primitives through a search gateway is a leaky
 abstraction. They stay as ordinary Pi extensions — which is exactly what Pi's
 extension system is for.
 
+## Composition is the point — not single-primitive lookup
+
+The executor.sh pattern (`list → search → execute`) is the *entry mechanism*, not
+the whole idea. Strudel does **not** stop at "find the one skill for this prompt."
+Because every on-demand kind is a collection under **one** gateway, a request is
+satisfied by **assembling a recipe across kinds** — not by retrieving a single
+item.
+
+A single task might resolve to: a *skill* (how to brainstorm) + a *tool* (to write
+files) + an *MCP server* (to query an API) + a *plugin* + a second *skill* —
+composed in order, with dependencies and bindings, into one execution that
+produces a single output. Like a kitchen: a dish is ingredients + utensils + a
+technique, combined — not one item off a shelf.
+
+The three gateway verbs, precisely:
+- **`search`** — gather *candidates across all on-demand kinds* by intent
+  (requirements gathering), not a single-kind lookup.
+- **`prep`** — distill those candidates into a validated, ordered **recipe**
+  (which primitives, in what order, with what `$N.field` bindings).
+- **`bake`** — execute the recipe → one result.
+
+**Build constraint (load-bearing):** the Pantry index, search, and recipe model
+are **kind-agnostic from day one.** v1 seeds the Pantry with skills first, but the
+plumbing must never assume a single kind — `search` returns mixed-kind candidates
+and recipes span kinds. *Skills-first is a content choice, not a schema
+constraint.* Building skills-only plumbing we'd have to rip out to compose later
+is exactly the kind of drift we're avoiding.
+
 ## Extension-only — no fork
 
 Strudel is a **Pi extension** and never forks or vendors Pi. The seam is Pi's
@@ -45,6 +73,53 @@ Strudel is a **Pi extension** and never forks or vendors Pi. The seam is Pi's
 
 We devDepend on `@earendil-works/pi-coding-agent` only for its `ExtensionAPI`
 types; at runtime strudel uses whatever Pi the user has.
+
+## Primitive placement & interop
+
+**Pi has two doors for primitives, not one:**
+- *Files (auto-discovered):* skills, prompt-templates, themes, context/rules files —
+  dropped into standard dirs (`~/.pi/agent/<kind>/`, `./.pi/<kind>/`), aggregated by
+  the resource-loader.
+- *Code (the ExtensionAPI):* tools, hooks, providers, MCP clients, code-commands — TS
+  modules (`jiti` / `pi install`) that `register…` via the API at load.
+
+Users keep using **both** Pi doors to add primitives. Strudel never gatekeeps how a
+primitive is *added* — only how on-demand primitives are *selected*.
+
+| Kind | Door | Lives | Class | Strudel role |
+|---|---|---|---|---|
+| skill | file | `~/.pi/agent/skills/`, `./.pi/skills/` | on-demand | index + select (replace Pi's dump); bake = inject chosen |
+| prompt/template | file | `…/prompts/` | on-demand | index + surface |
+| tool | code | an extension | on-demand | index via `getAllTools`; bake = `setActiveTools` subset |
+| mcp | code (no native MCP) | an MCP extension | on-demand | index its **individual tools**; activate the right ones |
+| slash_command (code) | code | extension | on-demand | index via `getCommands` |
+| subagent | code | extension | on-demand | deferred (v1) |
+| rule | file | `AGENTS.md`/`pi.md`/`.pi/context.md` | ambient | inventory only |
+| hook | code | extension (`pi.on`) | ambient | inventory only |
+| provider | code | extension | ambient/config | inventory only |
+| plugin/package | both | `packages/` | container | index contents |
+
+The Pantry is **both** a *search index* (on-demand kinds) and a *unified inventory*
+(all kinds, incl. ambient — for the catalog view and the visualizer).
+
+**Strudel is a runtime lens — nothing moves into it.** At `session_start` /
+`before_agent_start` strudel aggregates by (a) reading the same resource dirs Pi
+reads, and (b) enumerating the live registry (`getAllTools()`, `getCommands()`). A
+user's existing extensions / MCP servers are simply the *input* to the index — no
+migration, no relocation.
+
+**Execution: strudel curates, Pi executes.** The ExtensionAPI exposes
+`getAllTools` / `setActiveTools` but **no `executeTool`**. So strudel never runs
+primitives itself: bake = activate the chosen tools (`setActiveTools`) + inject the
+chosen text-primitives (skills/rules) → the agent runs the curated recipe through
+Pi's own loop → one output. Deterministic strudel-side orchestration (the lab's
+"oven", with `$N.field` bindings) is deferred — it would require strudel-owned
+implementations or an upstream `executeTool` contribution to Pi.
+
+**MCP granularity:** index each MCP *tool* individually (they register individually,
+so each appears in `getAllTools`) — not the server as a unit. Search surfaces the
+right 2 of Cloudflare's 60, not all 60. (Caveat: this holds when the MCP extension
+registers tools individually rather than behind one dispatcher tool — see Q3 notes.)
 
 ## The three scopes
 
