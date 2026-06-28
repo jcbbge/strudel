@@ -52,6 +52,20 @@ describe("indexRoots — kind inferred from subdir name", () => {
 		);
 	});
 
+	it("tolerates numeric ordering prefixes on kind dirs (e.g. 03_skills)", async () => {
+		write(
+			"03_skills/foo/SKILL.md",
+			"---\nname: foo\ndescription: a skill\n---\nx",
+		);
+		write("06_rules/bar.md", "---\nname: bar\ndescription: a rule\n---\nx");
+		write("10-plugins/baz.md", "---\nname: baz\n---\nx");
+
+		const items = await indexRoots([root]);
+		expect(items.find((i) => i.name === "foo")?.kind).toBe("skill");
+		expect(items.find((i) => i.name === "bar")?.kind).toBe("rule");
+		expect(items.find((i) => i.name === "baz")?.kind).toBe("plugin");
+	});
+
 	it("derives name from filename/dirname when frontmatter omits it", async () => {
 		write("skills/from-dir/SKILL.md", "no frontmatter here\njust prose");
 		write("rules/from-file.md", "plain rule text");

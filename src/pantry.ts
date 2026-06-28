@@ -38,6 +38,15 @@ const DIR_KIND_MAP: Record<string, string> = {
 	plugins: "plugin",
 };
 
+/**
+ * Map a subdirectory name to a kind key, tolerating a leading ordering prefix
+ * like "03_" or "10-" (common when people number dirs to control display order:
+ * 01_directives, 02_commands, 03_skills, ...).
+ */
+function kindFromDir(dir: string): string {
+	return dir.toLowerCase().replace(/^\d+[-_]/, "");
+}
+
 const TEXT_EXT = new Set([".md", ".mdx", ".markdown", ".txt"]);
 const ENTRY_STEMS = /^(skill|index|readme|agent|main)\.(md|mdx|markdown|txt)$/i;
 
@@ -64,7 +73,7 @@ export async function indexRoots(roots: string[]): Promise<Primitive[]> {
 		}
 
 		for (const dir of kindDirs) {
-			const kind = DIR_KIND_MAP[dir.toLowerCase()];
+			const kind = DIR_KIND_MAP[kindFromDir(dir)];
 			if (!kind) continue;
 
 			let entries: string[];
