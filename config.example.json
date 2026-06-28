@@ -1,0 +1,9 @@
+{
+  "pantry": {
+    "roots": [
+      "~/.pi/agent",
+      "~/.claude",
+      "~/.config/opencode"
+    ]
+  }
+}
