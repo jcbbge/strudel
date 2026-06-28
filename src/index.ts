@@ -4,12 +4,13 @@
  * Search agent primitives (skills, tools, MCP tools, commands, rules, ...) by
  * intent instead of registering all of them into the context window.
  *
- * Milestone 2: the Pantry indexes configured roots (kind inferred from the
- * subdirectory name) + the live runtime registry, and strudel_search ranks
- * across all kinds. Kind-agnostic; not skills-specific.
+ * The Pantry indexes configured roots (kind inferred from the subdirectory
+ * name) + the live runtime registry. strudel_search ranks across all kinds:
+ * L1 semantic when an embeddings endpoint is configured, else L0 lexical.
+ * Kind-agnostic; not skills-specific.
  *
  * Run locally:  pi -e src/index.ts -p "..."
- * Config:       ~/.strudel/config.json  →  { "pantry": { "roots": [ ... ] } }
+ * Config:       ~/.strudel/config.json
  */
 
 import { readFile } from "node:fs/promises";
@@ -17,36 +18,58 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type Primitive, indexRoots, lexicalSearch } from "./pantry.js";
+import {
+	type EmbeddingConfig,
+	httpEmbedder,
+	semanticSearch,
+} from "./embeddings.js";
+import {
+	type Primitive,
+	type Ranked,
+	indexRoots,
+	lexicalSearch,
+} from "./pantry.js";
 
 const STRUDEL_VERSION = "0.0.0";
 const DEFAULT_ROOTS = ["~/.pi/agent"];
+const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 
-async function loadRoots(): Promise<string[]> {
-	const cfg = join(homedir(), ".strudel", "config.json");
+interface StrudelConfig {
+	roots: string[];
+	embeddings?: EmbeddingConfig;
+}
+
+async function loadConfig(): Promise<StrudelConfig> {
+	const cfgPath = join(homedir(), ".strudel", "config.json");
 	try {
-		const parsed = JSON.parse(await readFile(cfg, "utf-8")) as {
+		const parsed = JSON.parse(await readFile(cfgPath, "utf-8")) as {
 			pantry?: { roots?: string[] };
+			embeddings?: EmbeddingConfig;
 		};
 		const roots = parsed.pantry?.roots;
-		if (Array.isArray(roots) && roots.length > 0) return roots;
+		return {
+			roots: Array.isArray(roots) && roots.length > 0 ? roots : DEFAULT_ROOTS,
+			embeddings: parsed.embeddings,
+		};
 	} catch {
-		// no config — fall back to defaults
+		return { roots: DEFAULT_ROOTS };
 	}
-	return DEFAULT_ROOTS;
 }
 
 export default async function strudel(pi: ExtensionAPI): Promise<void> {
-	const roots = await loadRoots();
-	const fileIndex = await indexRoots(roots);
+	const config = await loadConfig();
+	const fileIndex = await indexRoots(config.roots);
 
 	const byKind = new Map<string, number>();
 	for (const p of fileIndex) byKind.set(p.kind, (byKind.get(p.kind) ?? 0) + 1);
 	const kindSummary = [...byKind.entries()]
 		.map(([k, n]) => `${k}:${n}`)
 		.join(" ");
+	const searchMode = config.embeddings
+		? `semantic (${config.embeddings.model})`
+		: "lexical";
 	console.error(
-		`[strudel ${STRUDEL_VERSION}] pantry: ${fileIndex.length} file-primitives from ${roots.length} roots (${kindSummary})`,
+		`[strudel ${STRUDEL_VERSION}] pantry: ${fileIndex.length} file-primitives from ${config.roots.length} roots (${kindSummary}) | search: ${searchMode}`,
 	);
 
 	pi.registerTool({
@@ -78,24 +101,52 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 					source: "runtime:command",
 				})),
 			];
-
 			const all = [...fileIndex, ...runtime];
-			const hits = lexicalSearch(all, params.query, 8);
 
+			let hits: Ranked[];
+			let mode = "lexical";
+			if (config.embeddings) {
+				try {
+					hits = await semanticSearch(
+						all,
+						params.query,
+						httpEmbedder(config.embeddings),
+						CACHE_PATH,
+						8,
+					);
+					mode = "semantic";
+				} catch (err) {
+					// Endpoint down / error — degrade gracefully, never break search.
+					console.error(
+						`[strudel] embeddings failed, falling back to lexical: ${err instanceof Error ? err.message : String(err)}`,
+					);
+					hits = lexicalSearch(all, params.query, 8);
+				}
+			} else {
+				hits = lexicalSearch(all, params.query, 8);
+			}
+
+			const fmtScore = (s: number): string =>
+				mode === "semantic" ? s.toFixed(3) : String(s);
 			const lines = hits
 				.map(
 					(h) =>
-						`  [${h.kind}] ${h.name}  (score ${h.score})\n      ${h.description.slice(0, 90)}\n      ${h.source}`,
+						`  [${h.kind}] ${h.name}  (${fmtScore(h.score)})\n      ${h.description.slice(0, 90)}\n      ${h.source}`,
 				)
 				.join("\n");
 			const text =
 				hits.length === 0
-					? `No primitives matched "${params.query}" across ${all.length} indexed (${fileIndex.length} file + ${runtime.length} runtime).`
-					: `Top ${hits.length} of ${all.length} primitives for "${params.query}":\n${lines}`;
+					? `No primitives matched "${params.query}" across ${all.length} indexed.`
+					: `Top ${hits.length} of ${all.length} primitives for "${params.query}" (${mode}):\n${lines}`;
 
 			return {
 				content: [{ type: "text", text }],
-				details: { query: params.query, total: all.length, hits: hits.length },
+				details: {
+					query: params.query,
+					total: all.length,
+					hits: hits.length,
+					mode,
+				},
 			};
 		},
 	});
