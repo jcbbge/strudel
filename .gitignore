@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+# strudel runtime data (the Pantry's JSONL store) should not be committed
+.strudel/

@@ -1,0 +1,42 @@
+{
+  "name": "strudel",
+  "version": "0.0.0",
+  "description": "A Pi extension that fixes primitive overload: search agent primitives by intent instead of registering them all.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Josh Gantt",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jcbbge/strudel.git"
+  },
+  "homepage": "https://github.com/jcbbge/strudel#readme",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "agent",
+    "primitives",
+    "skills",
+    "gateway",
+    "pantry"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "ARCHITECTURE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "check": "biome check --error-on-warnings . && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@earendil-works/pi-coding-agent": "^0.80.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}
