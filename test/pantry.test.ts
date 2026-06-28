@@ -7,7 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { indexRoots, lexicalSearch } from "../src/pantry.js";
+import { indexRoots, isOnDemand, lexicalSearch } from "../src/pantry.js";
 
 let root: string;
 
@@ -144,5 +144,76 @@ describe("lexicalSearch — L0", () => {
 	it("only returns scoring matches", () => {
 		const hits = lexicalSearch(items, "quantum tunneling");
 		expect(hits).toEqual([]);
+	});
+});
+
+describe("code-file primitives", () => {
+	it("indexes a plugin dir via package.json", async () => {
+		write(
+			"10_plugins/alembic/package.json",
+			JSON.stringify({
+				name: "alembic",
+				description: "memory substrate extension",
+			}),
+		);
+		write("10_plugins/alembic/index.ts", "export default () => {};");
+
+		const p = (await indexRoots([root])).find((i) => i.name === "alembic");
+		expect(p?.kind).toBe("plugin");
+		expect(p?.description).toBe("memory substrate extension");
+	});
+
+	it("indexes a .ts plugin via its JSDoc header (skipping imports)", async () => {
+		write(
+			"10_plugins/composto.ts",
+			"import x from 'y';\n\n/**\n * composto — code-to-IR compression.\n */\nexport default 1;",
+		);
+		const items = await indexRoots([root]);
+		expect(items.find((i) => i.name === "composto")?.description).toBe(
+			"composto — code-to-IR compression.",
+		);
+	});
+
+	it("indexes an .mjs hook via its first line comment", async () => {
+		write(
+			"04_hooks/surface.mjs",
+			"#!/usr/bin/env bun\n// SessionStart hook — surface unmerged work.\nconsole.log(1);",
+		);
+		expect(
+			(await indexRoots([root])).find((i) => i.name === "surface")?.description,
+		).toBe("SessionStart hook — surface unmerged work.");
+	});
+
+	it("indexes a .sh hook by name even with no usable description", async () => {
+		write("04_hooks/session-start.sh", "#!/bin/bash\nexit 0\n");
+		const h = (await indexRoots([root])).find(
+			(i) => i.name === "session-start",
+		);
+		expect(h?.kind).toBe("hook");
+		expect(h?.description).toBe("");
+	});
+});
+
+describe("isOnDemand", () => {
+	it("excludes ambient kinds", () => {
+		for (const kind of ["rule", "hook", "directive", "provider"]) {
+			expect(
+				isOnDemand({ name: "x", kind, description: "", source: "s" }),
+			).toBe(false);
+		}
+	});
+	it("includes on-demand kinds", () => {
+		for (const kind of [
+			"skill",
+			"tool",
+			"mcp",
+			"command",
+			"plugin",
+			"subagent",
+		]) {
+			expect(
+				isOnDemand({ name: "x", kind, description: "", source: "s" }),
+			).toBe(true);
+		}
 	});
 });

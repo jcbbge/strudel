@@ -48,7 +48,21 @@ function kindFromDir(dir: string): string {
 }
 
 const TEXT_EXT = new Set([".md", ".mdx", ".markdown", ".txt"]);
-const ENTRY_STEMS = /^(skill|index|readme|agent|main)\.(md|mdx|markdown|txt)$/i;
+const CODE_EXT = new Set([".ts", ".js", ".mjs", ".cjs", ".sh", ".bash", ".py"]);
+const INDEXABLE_EXT = new Set([...TEXT_EXT, ...CODE_EXT]);
+const ENTRY_STEMS = new Set(["skill", "index", "readme", "agent", "main"]);
+
+/**
+ * Ambient kinds are auto-invoked, not selectable — you don't "pick" a hook or a
+ * rule; the runtime applies them. They stay in the Pantry inventory (counted,
+ * listable) but are excluded from search ranking by {@link isOnDemand}.
+ */
+export const AMBIENT_KINDS = new Set(["rule", "hook", "directive", "provider"]);
+
+/** On-demand primitives are the ones an agent selects per task — the searchable set. */
+export function isOnDemand(p: Primitive): boolean {
+	return !AMBIENT_KINDS.has(p.kind);
+}
 
 export function expandHome(p: string): string {
 	return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
@@ -119,33 +133,85 @@ async function readPrimitive(
 		} catch {
 			return undefined;
 		}
-		const entryFile =
-			bundle.find((f) => ENTRY_STEMS.test(f)) ??
-			bundle.find((f) => TEXT_EXT.has(extname(f).toLowerCase()));
-		if (!entryFile) return undefined;
-		file = join(full, entryFile);
+		const entry = pickDirEntry(bundle);
+		if (!entry) return undefined;
+		file = join(full, entry);
 		name = entryName; // directory name
 	} else {
 		const ext = extname(entryName).toLowerCase();
-		if (ext && !TEXT_EXT.has(ext)) return undefined;
+		if (ext && !INDEXABLE_EXT.has(ext)) return undefined;
 		file = full;
 		name = basename(entryName, ext);
 	}
 
+	const meta = await describeFile(file);
+	return {
+		name: meta.name ?? name,
+		kind,
+		description: meta.description ?? "",
+		source: file,
+	};
+}
+
+/** Pick the entry file inside a primitive directory: a manifest, a doc, or code. */
+function pickDirEntry(files: string[]): string | undefined {
+	const visible = files.filter((f) => !f.startsWith("."));
+	if (visible.includes("package.json")) return "package.json";
+	const stem = (f: string) => basename(f, extname(f)).toLowerCase();
+	const byStem = (exts: Set<string>): string | undefined =>
+		visible.find(
+			(f) => ENTRY_STEMS.has(stem(f)) && exts.has(extname(f).toLowerCase()),
+		);
+	return (
+		byStem(TEXT_EXT) ??
+		byStem(CODE_EXT) ??
+		visible.find((f) => INDEXABLE_EXT.has(extname(f).toLowerCase()))
+	);
+}
+
+/** Best-effort {name, description} from a file: manifest, frontmatter, or comment. */
+async function describeFile(
+	file: string,
+): Promise<{ name?: string; description?: string }> {
 	let raw = "";
 	try {
 		raw = await readFile(file, "utf-8");
 	} catch {
-		return undefined;
+		return {};
 	}
 
-	const { fm, body } = splitFrontmatter(raw);
-	return {
-		name: fm.name ?? name,
-		kind,
-		description: fm.description ?? firstProse(body) ?? "",
-		source: file,
-	};
+	if (basename(file) === "package.json") {
+		try {
+			const pkg = JSON.parse(raw) as { name?: string; description?: string };
+			return { name: pkg.name, description: pkg.description };
+		} catch {
+			return {};
+		}
+	}
+
+	if (TEXT_EXT.has(extname(file).toLowerCase())) {
+		const { fm, body } = splitFrontmatter(raw);
+		return { name: fm.name, description: fm.description ?? firstProse(body) };
+	}
+
+	// Code file — take the first JSDoc / line-comment as the description.
+	return { description: firstCommentDescription(raw) };
+}
+
+/** First doc-comment line in the head of a code file (skips shebang/imports/blanks). */
+function firstCommentDescription(raw: string): string | undefined {
+	for (const line of raw.split("\n").slice(0, 30)) {
+		const t = line.trim();
+		if (!t || t.startsWith("#!")) continue;
+		const star = t.match(/^\*\s*(.+?)\s*$/);
+		if (star && star[1] !== "/" && star[1] !== "*/") {
+			const text = star[1].replace(/\*\/\s*$/, "").trim();
+			if (text) return text.slice(0, 200);
+		}
+		const lineComment = t.match(/^(?:\/\/+|#)\s*(.+)$/);
+		if (lineComment?.[1]) return lineComment[1].slice(0, 200);
+	}
+	return undefined;
 }
 
 interface Frontmatter {

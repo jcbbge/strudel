@@ -20,7 +20,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { EmbeddingConfig } from "./embeddings.js";
-import { type Primitive, indexRoots } from "./pantry.js";
+import { type Primitive, indexRoots, isOnDemand } from "./pantry.js";
 import { search } from "./search.js";
 import {
 	type SurfaceMode,
@@ -147,7 +147,10 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		}),
 		async execute(_toolCallId, params) {
 			const all = [...fileIndex, ...runtimePrimitives(pi)];
-			const { hits, mode } = await search(all, params.query, {
+			// Ambient kinds (rules/hooks/directives) live in the inventory but are
+			// auto-invoked, not selectable — exclude them from search ranking.
+			const searchable = all.filter(isOnDemand);
+			const { hits, mode } = await search(searchable, params.query, {
 				embeddings: config.embeddings,
 				cachePath: CACHE_PATH,
 			});
@@ -172,14 +175,15 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				.join("\n");
 			const text =
 				hits.length === 0
-					? `No primitives matched "${params.query}" across ${all.length} indexed.`
-					: `Top ${hits.length} of ${all.length} primitives for "${params.query}" (${mode}):\n${lines}`;
+					? `No primitives matched "${params.query}" across ${searchable.length} searchable (${all.length} indexed).`
+					: `Top ${hits.length} of ${searchable.length} searchable primitives for "${params.query}" (${mode}):\n${lines}`;
 
 			return {
 				content: [{ type: "text", text }],
 				details: {
 					query: params.query,
-					total: all.length,
+					searchable: searchable.length,
+					indexed: all.length,
 					hits: hits.length,
 					mode,
 				},
