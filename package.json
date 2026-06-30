@@ -1,6 +1,6 @@
 {
   "name": "strudel",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A Pi extension that fixes primitive overload: search agent primitives by intent instead of registering them all.",
   "type": "module",
   "license": "MIT",
