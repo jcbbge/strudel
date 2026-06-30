@@ -10,12 +10,24 @@ import { join, basename, extname } from "node:path";
 import { homedir } from "node:os";
 import { createJiti } from "jiti";
 
-const TOOLS_DIR = join(homedir(), ".strudel", "tools");
+let TOOLS_DIR = join(homedir(), ".strudel", "tools");
+
+/** For testing: override the tools directory */
+export function setToolsDir(dir: string): void {
+	TOOLS_DIR = dir;
+	toolCache.clear();
+}
+
+/** For testing: reset to default */
+export function resetToolsDir(): void {
+	TOOLS_DIR = join(homedir(), ".strudel", "tools");
+	toolCache.clear();
+}
 
 /**
  * Expand ~ to home directory in strings
  */
-function expandTilde(value: unknown): unknown {
+export function expandTilde(value: unknown): unknown {
 	if (typeof value === "string" && value.startsWith("~")) {
 		return join(homedir(), value.slice(1));
 	}
@@ -67,7 +79,7 @@ const toolCache = new Map<string, (inputs: Record<string, unknown>) => Promise<u
 /**
  * Normalize tool name: "tool.read" -> "read", "read" -> "read"
  */
-function normalizeName(name: string): string {
+export function normalizeName(name: string): string {
 	return name.startsWith("tool.") ? name.slice(5) : name;
 }
 

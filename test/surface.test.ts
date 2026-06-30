@@ -12,16 +12,19 @@ import {
 } from "../src/surface.js";
 
 describe("baselineTools", () => {
-	it("pragmatic keeps the file tools", () => {
+	it("pragmatic keeps the file tools + infrastructure", () => {
 		expect(baselineTools("pragmatic")).toEqual([
 			"read",
 			"write",
 			"edit",
 			"bash",
+			"subagent",
+			"strudel_prep",
+			"strudel_bake",
 		]);
 	});
-	it("strict keeps the bare minimum", () => {
-		expect(baselineTools("strict")).toEqual(["read"]);
+	it("strict keeps the bare minimum + infrastructure", () => {
+		expect(baselineTools("strict")).toEqual(["read", "subagent", "strudel_prep", "strudel_bake"]);
 	});
 	it("an explicit override wins", () => {
 		expect(baselineTools("pragmatic", ["read", "grep"])).toEqual([
