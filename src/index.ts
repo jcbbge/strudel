@@ -29,18 +29,22 @@ import {
 	pruneToolsSection,
 	stripSkillsBlock,
 } from "./surface.js";
+import {
+	type StrudelConfig,
+	STRUDEL_VERSION,
+	initState,
+} from "./state.js";
 
-const STRUDEL_VERSION = "0.0.0";
+// Commands — each registers itself when imported
+import { registerStatusCommand } from "./commands/status.js";
+import { registerHealthCommand } from "./commands/health.js";
+import { registerPantryCommand } from "./commands/pantry.js";
+import { registerSurfaceCommand } from "./commands/surface.js";
+import { registerSearchCommand } from "./commands/search.js";
+
 const DEFAULT_ROOTS = ["~/.pi/agent"];
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 const MAX_ACTIVATED = 24; // bound the session surface so it can't slowly re-bloat
-
-interface StrudelConfig {
-	roots: string[];
-	embeddings?: EmbeddingConfig;
-	surface: SurfaceMode;
-	baseline?: string[];
-}
 
 async function loadConfig(): Promise<StrudelConfig> {
 	const cfgPath = join(homedir(), ".strudel", "config.json");
@@ -64,7 +68,7 @@ async function loadConfig(): Promise<StrudelConfig> {
 }
 
 /** The code-resident primitives Pi already has: tools + slash-commands. */
-function runtimePrimitives(pi: ExtensionAPI): Primitive[] {
+export function runtimePrimitives(pi: ExtensionAPI): Primitive[] {
 	return [
 		...pi.getAllTools().map((t) => ({
 			name: t.name,
@@ -84,6 +88,11 @@ function runtimePrimitives(pi: ExtensionAPI): Primitive[] {
 export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	const config = await loadConfig();
 	const fileIndex = await indexRoots(config.roots);
+	const baseline = baselineTools(config.surface, config.baseline);
+	const activated = new Set<string>();
+
+	// Initialize shared state for commands
+	initState({ config, fileIndex, activated, baseline, pi });
 
 	const byKind = new Map<string, number>();
 	for (const p of fileIndex) byKind.set(p.kind, (byKind.get(p.kind) ?? 0) + 1);
@@ -97,10 +106,6 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		`[strudel ${STRUDEL_VERSION}] pantry: ${fileIndex.length} file-primitives from ${config.roots.length} roots (${kindSummary}) | search: ${searchMode} | surface: ${config.surface}`,
 	);
 
-	const baseline = baselineTools(config.surface, config.baseline);
-	// Code primitives strudel has surfaced this session — kept active (bounded) so
-	// the agent can call them after discovering them (curate-and-run).
-	const activated = new Set<string>();
 	let warnedFormat = false;
 
 	// Make strudel the default discovery path: each turn, lock the tool surface to
@@ -132,6 +137,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		return { systemPrompt };
 	});
 
+	// Register the strudel_search tool
 	pi.registerTool({
 		name: "strudel_search",
 		label: "Search the Pantry",
@@ -190,4 +196,11 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			};
 		},
 	});
+
+	// Register introspection commands
+	registerStatusCommand(pi);
+	registerHealthCommand(pi);
+	registerPantryCommand(pi);
+	registerSurfaceCommand(pi);
+	registerSearchCommand(pi);
 }
