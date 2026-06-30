@@ -43,4 +43,42 @@ describe("search", () => {
 		expect(mode).toBe("lexical");
 		expect(hits[0].name).toBe("micro-animation-director");
 	});
+
+	it("respects the limit parameter", async () => {
+		const manyItems: Primitive[] = Array.from({ length: 20 }, (_, i) => ({
+			name: `skill-${i}`,
+			kind: "skill",
+			description: `skill number ${i}`,
+			source: `source-${i}`,
+		}));
+
+		const { hits } = await search(manyItems, "skill", {
+			cachePath,
+			limit: 5,
+		});
+		expect(hits.length).toBeLessThanOrEqual(5);
+	});
+
+	it("returns empty array for empty items", async () => {
+		const { hits, mode } = await search([], "anything", { cachePath });
+		expect(hits).toEqual([]);
+		expect(mode).toBe("lexical");
+	});
+
+	it("returns empty array for query with no matches", async () => {
+		const { hits } = await search(items, "quantum physics", { cachePath });
+		expect(hits).toEqual([]);
+	});
+
+	it("defaults to limit of 8", async () => {
+		const manyItems: Primitive[] = Array.from({ length: 20 }, (_, i) => ({
+			name: `thing-${i}`,
+			kind: "skill",
+			description: "thing",
+			source: `s-${i}`,
+		}));
+
+		const { hits } = await search(manyItems, "thing", { cachePath });
+		expect(hits.length).toBeLessThanOrEqual(8);
+	});
 });

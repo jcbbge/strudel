@@ -7,7 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { indexRoots, isOnDemand, lexicalSearch } from "../src/pantry.js";
+import { indexRoots, isOnDemand, lexicalSearch, expandHome } from "../src/pantry.js";
 
 let root: string;
 
@@ -210,10 +210,59 @@ describe("isOnDemand", () => {
 			"command",
 			"plugin",
 			"subagent",
+			"agent",
 		]) {
 			expect(
 				isOnDemand({ name: "x", kind, description: "", source: "s" }),
 			).toBe(true);
 		}
+	});
+});
+
+describe("expandHome", () => {
+	it("expands ~ to home directory", () => {
+		const result = expandHome("~/foo/bar");
+		expect(result).not.toContain("~");
+		expect(result).toContain("foo/bar");
+	});
+
+	it("leaves absolute paths unchanged", () => {
+		expect(expandHome("/absolute/path")).toBe("/absolute/path");
+	});
+
+	it("leaves relative paths unchanged", () => {
+		expect(expandHome("relative/path")).toBe("relative/path");
+	});
+});
+
+describe("agent vs subagent kinds", () => {
+	it("maps agents/ directory to agent kind", async () => {
+		write(
+			"agents/worker.md",
+			"---\nname: worker\ndescription: a worker agent\n---\nbody",
+		);
+		const items = await indexRoots([root]);
+		const worker = items.find((i) => i.name === "worker");
+		expect(worker?.kind).toBe("agent");
+	});
+
+	it("maps subagents/ directory to subagent kind", async () => {
+		write(
+			"subagents/coder.md",
+			"---\nname: coder\ndescription: a coder subagent\n---\nbody",
+		);
+		const items = await indexRoots([root]);
+		const coder = items.find((i) => i.name === "coder");
+		expect(coder?.kind).toBe("subagent");
+	});
+
+	it("maps 08_subagents/ with prefix to subagent kind", async () => {
+		write(
+			"08_subagents/scout.md",
+			"---\nname: scout\ndescription: a scout\n---\nbody",
+		);
+		const items = await indexRoots([root]);
+		const scout = items.find((i) => i.name === "scout");
+		expect(scout?.kind).toBe("subagent");
 	});
 });

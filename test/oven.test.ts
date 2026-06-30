@@ -523,3 +523,117 @@ describe("prep then bake workflow", () => {
 		expect(bakeResult.success).toBe(false);
 	});
 });
+
+// =============================================================================
+// Tool caching
+// =============================================================================
+
+describe("tool caching", () => {
+	it("loads the same tool only once across multiple steps", async () => {
+		let loadCount = 0;
+		writeTool("counter", `
+			global.loadCount = (global.loadCount || 0) + 1;
+			export default async function(inputs: any) {
+				return { count: global.loadCount, x: inputs.x };
+			}
+		`);
+
+		const result = await bake({
+			goal: "use same tool twice",
+			layers: [
+				{ step: 1, ingredient: "counter", inputs: { x: 1 } },
+				{ step: 2, ingredient: "counter", inputs: { x: 2 } },
+				{ step: 3, ingredient: "counter", inputs: { x: 3 } },
+			],
+		});
+
+		expect(result.success).toBe(true);
+		// All steps should see the same loadCount (tool loaded once)
+		const counts = result.steps.map(s => (s.output as any).count);
+		expect(new Set(counts).size).toBe(1);
+	});
+});
+
+// =============================================================================
+// Edge cases and error messages
+// =============================================================================
+
+describe("edge cases", () => {
+	it("handles empty recipe", async () => {
+		const result = await bake({ goal: "nothing", layers: [] });
+		expect(result.success).toBe(true);
+		expect(result.steps).toEqual([]);
+		expect(result.finalOutput).toBe(null);
+	});
+
+	it("handles non-sequential step numbers", async () => {
+		writeTool("id", `export default async (i: any) => i`);
+
+		const result = await bake({
+			goal: "gaps in steps",
+			layers: [
+				{ step: 10, ingredient: "id", inputs: { x: "ten" } },
+				{ step: 5, ingredient: "id", inputs: { x: "five" } },
+				{ step: 100, ingredient: "id", inputs: { x: "hundred" } },
+			],
+		});
+
+		expect(result.success).toBe(true);
+		// Should execute in order: 5, 10, 100
+		expect(result.steps.map(s => s.step)).toEqual([5, 10, 100]);
+	});
+
+	it("provides useful error for tool that doesn't export default", async () => {
+		writeTool("nodefault", `export const x = 1;`);
+
+		const result = await bake({
+			goal: "bad tool",
+			layers: [{ step: 1, ingredient: "nodefault", inputs: {} }],
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("does not export a default function");
+	});
+
+	it("provides useful error for syntax error in tool", async () => {
+		writeTool("badsyntax", `export default async function( { broken`);
+
+		const result = await bake({
+			goal: "syntax error",
+			layers: [{ step: 1, ingredient: "badsyntax", inputs: {} }],
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.steps[0].error).toBeDefined();
+	});
+
+	it("bindings don't resolve inside array elements", async () => {
+		// Bindings only resolve string values that START with $, not embedded
+		writeTool("arr", `export default async (i: any) => i`);
+
+		const result = await bake({
+			goal: "array with bindings",
+			layers: [
+				{ step: 1, ingredient: "arr", inputs: { x: 42 } },
+				{ step: 2, ingredient: "arr", inputs: { items: ["$1.x", "literal"] } },
+			],
+		});
+
+		expect(result.success).toBe(true);
+		// Array elements are passed through as-is, not resolved
+		expect((result.finalOutput as any).items).toEqual(["$1.x", "literal"]);
+	});
+
+	it("handles very long goal strings", async () => {
+		writeTool("ok", `export default async () => ({ ok: true })`);
+		const longGoal = "x".repeat(10000);
+
+		const result = await bake({
+			goal: longGoal,
+			layers: [{ step: 1, ingredient: "ok", inputs: {} }],
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.goal).toBe(longGoal);
+	});
+});
