@@ -24,6 +24,20 @@ export function resetToolsDir(): void {
 	toolCache.clear();
 }
 
+/** Persist workspace state after bake completes */
+async function persistWorkspaceState(): Promise<void> {
+	try {
+		const wsPath = join(TOOLS_DIR, "_lib", "workspace.ts");
+		if (!existsSync(wsPath)) return;
+		const ws = await jiti.import(wsPath) as { persistWorkspace?: () => void };
+		if (typeof ws.persistWorkspace === "function") {
+			ws.persistWorkspace();
+		}
+	} catch {
+		// Silent fail — persistence is best-effort
+	}
+}
+
 /**
  * Expand ~ to home directory in strings
  */
@@ -228,6 +242,9 @@ export async function bake(recipe: Recipe): Promise<BakeResult> {
 			break; // Stop on first error
 		}
 	}
+
+	// Persist workspace state after bake completes
+	await persistWorkspaceState();
 
 	return {
 		goal: recipe.goal,
