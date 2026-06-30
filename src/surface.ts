@@ -12,8 +12,8 @@
 export const GATEWAY_TOOL = "strudel_search";
 
 /** Pragmatic (B): the always-needed file tools. Strict (A): bare minimum. */
-const PRAGMATIC_BASELINE = ["read", "write", "edit", "bash"];
-const STRICT_BASELINE = ["read"];
+const PRAGMATIC_BASELINE = ["read", "write", "edit", "bash", "subagent", "strudel_prep", "strudel_bake"];
+const STRICT_BASELINE = ["read", "subagent", "strudel_prep", "strudel_bake"];
 
 export type SurfaceMode = "pragmatic" | "strict";
 

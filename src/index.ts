@@ -34,6 +34,7 @@ import {
 	STRUDEL_VERSION,
 	initState,
 } from "./state.js";
+import { bake, prep, listTools, type Recipe, type RecipeLayer } from "./oven.js";
 
 // Commands — each registers itself when imported
 import { registerStatusCommand } from "./commands/status.js";
@@ -161,14 +162,30 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				cachePath: CACHE_PATH,
 			});
 
-			// Curate-and-run: make surfaced code primitives callable next turn, bounded.
+			// Curate-and-run: make surfaced code primitives callable THIS turn, bounded.
+			let surfaceChanged = false;
 			for (const h of hits) {
-				if (h.source === "runtime:tool") activated.add(h.name);
+				if (h.source === "runtime:tool" && !activated.has(h.name)) {
+					activated.add(h.name);
+					surfaceChanged = true;
+				}
+				// Agent definitions (both kinds) require the subagent tool to invoke
+				if ((h.kind === "agent" || h.kind === "subagent") && !activated.has("subagent")) {
+					activated.add("subagent");
+					surfaceChanged = true;
+				}
 			}
 			while (activated.size > MAX_ACTIVATED) {
 				const oldest = activated.values().next().value;
 				if (oldest === undefined) break;
 				activated.delete(oldest);
+			}
+
+			// Immediately update the active surface so tools are callable THIS turn
+			if (surfaceChanged) {
+				const available = new Set(pi.getAllTools().map((t) => t.name));
+				const active = computeActiveSurface(baseline, [...activated], available);
+				pi.setActiveTools(active);
 			}
 
 			const fmtScore = (s: number): string =>
@@ -192,6 +209,150 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 					indexed: all.length,
 					hits: hits.length,
 					mode,
+				},
+			};
+		},
+	});
+
+	// Register the strudel_prep tool
+	pi.registerTool({
+		name: "strudel_prep",
+		label: "Prep a Recipe",
+		description:
+			"Validate a recipe before baking. Checks that all tools exist and bindings are valid. " +
+			"Use this to verify a recipe will work before executing it.",
+		promptSnippet:
+			"strudel_prep: validate a recipe (tools exist, bindings valid) before baking.",
+		parameters: Type.Object({
+			goal: Type.String({ description: "What the recipe accomplishes" }),
+			layers: Type.Array(
+				Type.Object({
+					step: Type.Number({ description: "Step number (1-indexed, execution order)" }),
+					ingredient: Type.String({ description: "Tool name, e.g. 'tool.read' or 'read'" }),
+					inputs: Type.Record(Type.String(), Type.Unknown(), {
+						description: "Tool inputs. Use $N.field to reference output from step N.",
+					}),
+				}),
+				{ description: "Recipe steps" }
+			),
+		}),
+		async execute(_toolCallId, params) {
+			const recipe: Recipe = {
+				goal: params.goal,
+				layers: params.layers as RecipeLayer[],
+			};
+
+			const result = await prep(recipe);
+			const available = listTools();
+
+			let text = `Recipe: ${params.goal}\n`;
+			text += `Valid: ${result.valid ? "✓" : "✗"}\n\n`;
+
+			text += `Tools (${result.tools.length}):\n`;
+			for (const t of result.tools) {
+				text += `  ${t.found ? "✓" : "✗"} ${t.name}\n`;
+			}
+
+			if (result.bindings.length > 0) {
+				text += `\nBindings:\n`;
+				for (const b of result.bindings) {
+					text += `  ${b.valid ? "✓" : "✗"} Step ${b.step}: ${b.binding}`;
+					if (b.reason) text += ` — ${b.reason}`;
+					text += "\n";
+				}
+			}
+
+			if (result.errors.length > 0) {
+				text += `\nErrors:\n`;
+				for (const e of result.errors) {
+					text += `  • ${e}\n`;
+				}
+			}
+
+			text += `\nAvailable tools: ${available.join(", ")}`;
+
+			return {
+				content: [{ type: "text", text }],
+				details: result,
+			};
+		},
+	});
+
+	// Register the strudel_bake tool
+	pi.registerTool({
+		name: "strudel_bake",
+		label: "Bake a Recipe",
+		description:
+			"Execute a recipe — a sequence of tool calls with bindings. Each layer specifies a tool " +
+			"and its inputs. Use $N.field syntax to pass output from step N to later steps. " +
+			"Tools are loaded from ~/.strudel/tools/.",
+		promptSnippet:
+			"strudel_bake: execute a recipe (tool sequence with $N.field bindings).",
+		parameters: Type.Object({
+			goal: Type.String({ description: "What the recipe accomplishes" }),
+			layers: Type.Array(
+				Type.Object({
+					step: Type.Number({ description: "Step number (1-indexed, execution order)" }),
+					ingredient: Type.String({ description: "Tool name, e.g. 'tool.read' or 'read'" }),
+					inputs: Type.Record(Type.String(), Type.Unknown(), {
+						description: "Tool inputs. Use $N.field to reference output from step N.",
+					}),
+				}),
+				{ description: "Recipe steps" }
+			),
+		}),
+		async execute(_toolCallId, params) {
+			const recipe: Recipe = {
+				goal: params.goal,
+				layers: params.layers as RecipeLayer[],
+			};
+
+			const result = await bake(recipe);
+
+			let text = `Recipe: ${params.goal}\n`;
+			text += `Status: ${result.success ? "✓ Success" : "✗ Failed"}\n`;
+			text += `Duration: ${result.totalDurationMs}ms\n\n`;
+
+			text += `Steps:\n`;
+			for (const step of result.steps) {
+				const status = step.error ? "✗" : "✓";
+				text += `  ${status} Step ${step.step}: ${step.ingredient} (${step.durationMs}ms)\n`;
+				if (step.error) {
+					text += `      Error: ${step.error}\n`;
+				}
+			}
+
+			if (result.error) {
+				text += `\nError: ${result.error}\n`;
+			}
+
+			// Format final output
+			if (result.finalOutput !== null && result.finalOutput !== undefined) {
+				text += `\n--- Final Output ---\n`;
+				if (typeof result.finalOutput === "object") {
+					// For objects, show a summary or the content field if present
+					const out = result.finalOutput as Record<string, unknown>;
+					if ("content" in out && typeof out.content === "string") {
+						text += out.content;
+					} else {
+						text += JSON.stringify(result.finalOutput, null, 2);
+					}
+				} else {
+					text += String(result.finalOutput);
+				}
+			}
+
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					success: result.success,
+					steps: result.steps.map(s => ({
+						step: s.step,
+						ingredient: s.ingredient,
+						durationMs: s.durationMs,
+						error: s.error,
+					})),
+					totalDurationMs: result.totalDurationMs,
 				},
 			};
 		},
