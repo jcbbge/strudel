@@ -36,6 +36,7 @@ const DIR_KIND_MAP: Record<string, string> = {
 	subagents: "subagent",
 	directives: "directive",
 	plugins: "plugin",
+	recipes: "recipe",
 };
 
 /**
@@ -49,7 +50,8 @@ function kindFromDir(dir: string): string {
 
 const TEXT_EXT = new Set([".md", ".mdx", ".markdown", ".txt"]);
 const CODE_EXT = new Set([".ts", ".js", ".mjs", ".cjs", ".sh", ".bash", ".py"]);
-const INDEXABLE_EXT = new Set([...TEXT_EXT, ...CODE_EXT]);
+const DATA_EXT = new Set([".json"]);
+const INDEXABLE_EXT = new Set([...TEXT_EXT, ...CODE_EXT, ...DATA_EXT]);
 const ENTRY_STEMS = new Set(["skill", "index", "readme", "agent", "main"]);
 
 /**
@@ -180,10 +182,13 @@ async function describeFile(
 		return {};
 	}
 
-	if (basename(file) === "package.json") {
+	if (DATA_EXT.has(extname(file).toLowerCase())) {
+		// Any JSON primitive — package.json, recipes, other manifests. We only
+		// read the top-level {name, description} fields; the kind-specific
+		// loader (e.g. recipe.ts) parses the full schema when needed.
 		try {
-			const pkg = JSON.parse(raw) as { name?: string; description?: string };
-			return { name: pkg.name, description: pkg.description };
+			const obj = JSON.parse(raw) as { name?: string; description?: string };
+			return { name: obj.name, description: obj.description };
 		} catch {
 			return {};
 		}

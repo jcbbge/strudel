@@ -35,6 +35,12 @@ import {
 	initState,
 } from "./state.js";
 import { bake, prep, listTools, type Recipe, type RecipeLayer } from "./oven.js";
+import {
+	loadRecipe,
+	expandParams,
+	checkParams,
+	findRecipe,
+} from "./recipe.js";
 
 // Commands — each registers itself when imported
 import { registerStatusCommand } from "./commands/status.js";
@@ -43,7 +49,7 @@ import { registerPantryCommand } from "./commands/pantry.js";
 import { registerSurfaceCommand } from "./commands/surface.js";
 import { registerSearchCommand } from "./commands/search.js";
 
-const DEFAULT_ROOTS = ["~/.pi/agent"];
+const DEFAULT_ROOTS = ["~/.pi/agent", "~/.strudel"];
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 const MAX_ACTIVATED = 24; // bound the session surface so it can't slowly re-bloat
 
@@ -217,15 +223,18 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	// Register the strudel_prep tool
 	pi.registerTool({
 		name: "strudel_prep",
-		label: "Prep a Recipe",
+		label: "Compose a Recipe",
 		description:
-			"Validate a recipe before baking. Checks that all tools exist and bindings are valid. " +
-			"Use this to verify a recipe will work before executing it.",
+			"Compose a recipe. The middle verb of the triad: search → prep → bake. " +
+			"Takes a goal + a sketch of layers (or a named recipe from the Pantry + params), " +
+			"returns a validated recipe with all tools resolved and $N.field bindings checked. " +
+			"Always call before bake on any multi-step work. On success the response includes " +
+			"a copy-pasteable strudel_bake invocation.",
 		promptSnippet:
-			"strudel_prep: validate a recipe (tools exist, bindings valid) before baking.",
+			"strudel_prep: compose a recipe (search → prep → bake). Returns a validated recipe + ready-to-paste bake call.",
 		parameters: Type.Object({
 			goal: Type.String({ description: "What the recipe accomplishes" }),
-			layers: Type.Array(
+			layers: Type.Optional(Type.Array(
 				Type.Object({
 					step: Type.Number({ description: "Step number (1-indexed, execution order)" }),
 					ingredient: Type.String({ description: "Tool name, e.g. 'tool.read' or 'read'" }),
@@ -233,17 +242,85 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 						description: "Tool inputs. Use $N.field to reference output from step N.",
 					}),
 				}),
-				{ description: "Recipe steps" }
-			),
+				{ description: "Recipe steps (ad-hoc composition). Omit if using `recipe` + `params`." }
+			)),
+			recipe: Type.Optional(Type.String({
+				description: "Named recipe from the Pantry (e.g. 'bench.load'). Omit if providing raw `layers`.",
+			})),
+			params: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
+				description: "Params to substitute into the recipe's {token} placeholders.",
+			})),
 		}),
 		async execute(_toolCallId, params) {
+			let effectiveLayers: RecipeLayer[];
+			let recipeExpansionNote = "";
+
+			// Named-recipe path: look up in the Pantry, substitute params, expand.
+			if (params.recipe) {
+				if (params.layers && params.layers.length > 0) {
+					return {
+						content: [{ type: "text", text: `Provide either \`recipe\` or \`layers\`, not both.` }],
+						details: { valid: false, errors: ["both recipe and layers provided"], missing: [] as string[] },
+					};
+				}
+				const primitive = findRecipe(fileIndex, params.recipe);
+				if (!primitive) {
+					return {
+						content: [{
+							type: "text",
+							text: `Unknown recipe: "${params.recipe}". Run \`strudel_search\` to see what recipes are indexed.`,
+						}],
+						details: { valid: false, errors: [`unknown recipe: ${params.recipe}`], missing: [] as string[] },
+					};
+				}
+				let loaded;
+				try {
+					loaded = await loadRecipe(primitive.source);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					return {
+						content: [{ type: "text", text: `Failed to load recipe "${params.recipe}": ${msg}` }],
+						details: { valid: false, errors: [msg], missing: [] as string[] },
+					};
+				}
+				const check = checkParams(loaded, params.params ?? {});
+				if (!check.ok) {
+					return {
+						content: [{
+							type: "text",
+							text:
+								`Recipe "${params.recipe}" is missing params: ${check.missing.join(", ")}\n` +
+								`Declared params: ${loaded.params.join(", ") || "(none)"}`,
+						}],
+						details: { valid: false, missing: check.missing, errors: [`missing params: ${check.missing.join(", ")}`] },
+					};
+				}
+				effectiveLayers = expandParams(loaded.layers, params.params ?? {});
+				const extraNote = check.extra.length > 0
+					? ` (unused params ignored: ${check.extra.join(", ")})`
+					: "";
+				recipeExpansionNote = `Expanded from recipe \`${params.recipe}\`${extraNote}.\n`;
+			} else if (params.layers && params.layers.length > 0) {
+				effectiveLayers = params.layers as RecipeLayer[];
+			} else {
+				return {
+					content: [{ type: "text", text: `Provide either \`recipe\` (a Pantry recipe name) or \`layers\` (raw layer array).` }],
+					details: { valid: false, errors: ["no recipe or layers provided"], missing: [] as string[] },
+				};
+			}
+
 			const recipe: Recipe = {
 				goal: params.goal,
-				layers: params.layers as RecipeLayer[],
+				layers: effectiveLayers,
 			};
 
 			const result = await prep(recipe);
 			const available = listTools();
+
+			// Mark this recipe shape as prepped so a subsequent bake doesn't warn.
+			if (result.valid) {
+				preppedRecipes.add(recipeKey(params.goal, effectiveLayers));
+			}
 
 			let text = `Recipe: ${params.goal}\n`;
 			text += `Valid: ${result.valid ? "✓" : "✗"}\n\n`;
@@ -271,23 +348,44 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 
 			text += `\nAvailable tools: ${available.join(", ")}`;
 
+			// On success, emit a copy-pasteable bake call so the agent can advance
+			// in one motion (prep → bake without retyping the recipe).
+			if (result.valid) {
+				const bakeCall = {
+					goal: params.goal,
+					layers: effectiveLayers,
+				};
+				text = recipeExpansionNote + text +
+					`\n\n--- Ready to bake ---\n` +
+					`Recipe validated. Next call:\n\n` +
+					`strudel_bake(${JSON.stringify(bakeCall, null, 2)})\n`;
+			}
+
 			return {
 				content: [{ type: "text", text }],
-				details: result,
+				details: { ...result, prepped: result.valid } as unknown as Record<string, unknown>,
 			};
 		},
 	});
+
+	// Track which recipes have been prepped to enable bake "unprepped" warnings.
+	// Keyed by a stable hash of (goal + layer ingredients) so identical recipes
+	// composed via prep are recognized by bake.
+	const preppedRecipes = new Set<string>();
+	const recipeKey = (goal: string, layers: Array<{ step: number; ingredient: string }>): string =>
+		`${goal}§${layers.map((l) => `${l.step}:${l.ingredient}`).join("|")}`;
 
 	// Register the strudel_bake tool
 	pi.registerTool({
 		name: "strudel_bake",
 		label: "Bake a Recipe",
 		description:
-			"Execute a recipe — a sequence of tool calls with bindings. Each layer specifies a tool " +
-			"and its inputs. Use $N.field syntax to pass output from step N to later steps. " +
-			"Tools are loaded from ~/.strudel/tools/.",
+			"Execute a recipe — the final verb of the triad: search → prep → bake. " +
+			"Runs the sequence of tool calls with $N.field bindings between steps. " +
+			"Tools are loaded from ~/.strudel/tools/. For multi-step recipes, call " +
+			"strudel_prep first to validate — bake will warn (not fail) when run unprepped.",
 		promptSnippet:
-			"strudel_bake: execute a recipe (tool sequence with $N.field bindings).",
+			"strudel_bake: execute a recipe (final verb of search → prep → bake).",
 		parameters: Type.Object({
 			goal: Type.String({ description: "What the recipe accomplishes" }),
 			layers: Type.Array(
@@ -307,11 +405,26 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				layers: params.layers as RecipeLayer[],
 			};
 
+			// Soft-warn when a multi-step recipe is baked without a prior prep.
+			// This teaches the search → prep → bake discipline without blocking work.
+			const key = recipeKey(params.goal, params.layers);
+			const wasPrepped = preppedRecipes.has(key);
+			const isMultiStep = params.layers.length > 1;
+			const showPrepWarning = isMultiStep && !wasPrepped;
+
 			const result = await bake(recipe);
+
+			// After a successful bake we no longer need the prep flag for this recipe.
+			preppedRecipes.delete(key);
 
 			let text = `Recipe: ${params.goal}\n`;
 			text += `Status: ${result.success ? "✓ Success" : "✗ Failed"}\n`;
-			text += `Duration: ${result.totalDurationMs}ms\n\n`;
+			text += `Duration: ${result.totalDurationMs}ms\n`;
+			if (showPrepWarning) {
+				text += `⚠  Baked without prep. The triad is search → prep → bake — ` +
+					`run strudel_prep first on multi-step recipes to validate tools and bindings before execution.\n`;
+			}
+			text += `\n`;
 
 			text += `Steps:\n`;
 			for (const step of result.steps) {
