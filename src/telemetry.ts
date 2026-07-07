@@ -1,7 +1,7 @@
 /**
  * Telemetry bandit — strudel's online learning loop.
  *
- * Implements the spec at bench/agent-evals/specs/telemetry-bandit.md:
+ * Implements the spec at /Users/jrg/evals/specs/telemetry-bandit.md:
  * append-only JSONL event log (~/.strudel/telemetry.jsonl), decayed counters
  * (half-life 14d), Beta-smoothed adopt/succeed prior, confidence-gated blend
  * with the semantic score (λ capped at 0.35), ε-greedy exploration slot,
