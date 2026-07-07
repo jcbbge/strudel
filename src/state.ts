@@ -13,11 +13,30 @@ import type { SurfaceMode } from "./surface.js";
 
 export const STRUDEL_VERSION = "0.1.0";
 
+/** Per-tool presentation overrides — how a registered tool describes itself. */
+export interface ToolPresentation {
+	description?: string;
+	promptSnippet?: string;
+}
+
+/**
+ * The presentation genome: config-loadable overrides for how strudel presents
+ * itself to the model (tool descriptions/snippets + the pantry inventory line).
+ * `inventoryLine: false` suppresses the line; a string replaces the default.
+ */
+export interface PresentationConfig {
+	tools?: Record<string, ToolPresentation>;
+	inventoryLine?: string | false;
+}
+
 export interface StrudelConfig {
 	roots: string[];
 	embeddings?: EmbeddingConfig;
 	surface: SurfaceMode;
 	baseline?: string[];
+	presentation?: PresentationConfig;
+	/** Telemetry kill switch (spec §5): false disables all writes and forces λ=0. */
+	telemetry?: boolean;
 }
 
 export interface StrudelState {
