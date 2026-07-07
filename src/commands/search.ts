@@ -7,10 +7,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { runtimePrimitives } from "../index.js";
 import { isOnDemand } from "../pantry.js";
 import { search } from "../search.js";
 import { getState } from "../state.js";
-import { runtimePrimitives } from "../index.js";
 
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 
@@ -43,7 +43,7 @@ export function registerSearchCommand(pi: ExtensionAPI): void {
 			const fmtScore = (s: number): string =>
 				mode === "semantic" ? s.toFixed(3) : String(s);
 
-			const header = ` #  Score   Kind        Name                    Source`;
+			const header = " #  Score   Kind        Name                    Source";
 			const divider = "─".repeat(70);
 
 			const rows = hits.map((h, i) => {
@@ -52,9 +52,7 @@ export function registerSearchCommand(pi: ExtensionAPI): void {
 				const kind = h.kind.padEnd(10);
 				const name = h.name.slice(0, 22).padEnd(22);
 				const source =
-					h.source.length > 30
-						? "..." + h.source.slice(-27)
-						: h.source;
+					h.source.length > 30 ? `...${h.source.slice(-27)}` : h.source;
 				return `${num}  ${score}   ${kind}  ${name}  ${source}`;
 			});
 

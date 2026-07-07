@@ -19,13 +19,22 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { loadConfig } from "./config.js";
+import {
+	type Recipe,
+	type RecipeLayer,
+	bake,
+	listTools,
+	prep,
+} from "./oven.js";
 import { type Primitive, indexRoots, isOnDemand } from "./pantry.js";
 import {
 	defaultInventoryLine,
 	presentTool,
 	resolveInventoryLine,
 } from "./presentation.js";
+import { checkParams, expandParams, findRecipe, loadRecipe } from "./recipe.js";
 import { search } from "./search.js";
+import { STRUDEL_VERSION, initState } from "./state.js";
 import {
 	baselineTools,
 	computeActiveSurface,
@@ -34,22 +43,14 @@ import {
 	stripSkillsBlock,
 	touchActivated,
 } from "./surface.js";
-import { STRUDEL_VERSION, initState } from "./state.js";
 import { Telemetry, primitiveKey } from "./telemetry.js";
-import { bake, prep, listTools, type Recipe, type RecipeLayer } from "./oven.js";
-import {
-	loadRecipe,
-	expandParams,
-	checkParams,
-	findRecipe,
-} from "./recipe.js";
 
-// Commands — each registers itself when imported
-import { registerStatusCommand } from "./commands/status.js";
 import { registerHealthCommand } from "./commands/health.js";
 import { registerPantryCommand } from "./commands/pantry.js";
-import { registerSurfaceCommand } from "./commands/surface.js";
 import { registerSearchCommand } from "./commands/search.js";
+// Commands — each registers itself when imported
+import { registerStatusCommand } from "./commands/status.js";
+import { registerSurfaceCommand } from "./commands/surface.js";
 
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 const MAX_ACTIVATED = 24; // bound the session surface so it can't slowly re-bloat
@@ -217,7 +218,11 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			// Immediately update the active surface so tools are callable THIS turn
 			if (surfaceChanged) {
 				const available = new Set(pi.getAllTools().map((t) => t.name));
-				const active = computeActiveSurface(baseline, [...activated], available);
+				const active = computeActiveSurface(
+					baseline,
+					[...activated],
+					available,
+				);
 				pi.setActiveTools(active);
 			}
 
@@ -263,22 +268,38 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		}),
 		parameters: Type.Object({
 			goal: Type.String({ description: "What the recipe accomplishes" }),
-			layers: Type.Optional(Type.Array(
-				Type.Object({
-					step: Type.Number({ description: "Step number (1-indexed, execution order)" }),
-					ingredient: Type.String({ description: "Tool name, e.g. 'tool.read' or 'read'" }),
-					inputs: Type.Record(Type.String(), Type.Unknown(), {
-						description: "Tool inputs. Use $N.field to reference output from step N.",
+			layers: Type.Optional(
+				Type.Array(
+					Type.Object({
+						step: Type.Number({
+							description: "Step number (1-indexed, execution order)",
+						}),
+						ingredient: Type.String({
+							description: "Tool name, e.g. 'tool.read' or 'read'",
+						}),
+						inputs: Type.Record(Type.String(), Type.Unknown(), {
+							description:
+								"Tool inputs. Use $N.field to reference output from step N.",
+						}),
 					}),
+					{
+						description:
+							"Recipe steps (ad-hoc composition). Omit if using `recipe` + `params`.",
+					},
+				),
+			),
+			recipe: Type.Optional(
+				Type.String({
+					description:
+						"Named recipe from the Pantry (e.g. 'bench.load'). Omit if providing raw `layers`.",
 				}),
-				{ description: "Recipe steps (ad-hoc composition). Omit if using `recipe` + `params`." }
-			)),
-			recipe: Type.Optional(Type.String({
-				description: "Named recipe from the Pantry (e.g. 'bench.load'). Omit if providing raw `layers`.",
-			})),
-			params: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
-				description: "Params to substitute into the recipe's {token} placeholders.",
-			})),
+			),
+			params: Type.Optional(
+				Type.Record(Type.String(), Type.Unknown(), {
+					description:
+						"Params to substitute into the recipe's {token} placeholders.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params) {
 			let effectiveLayers: RecipeLayer[];
@@ -289,46 +310,73 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			if (params.recipe) {
 				if (params.layers && params.layers.length > 0) {
 					return {
-						content: [{ type: "text", text: `Provide either \`recipe\` or \`layers\`, not both.` }],
-						details: { valid: false, errors: ["both recipe and layers provided"], missing: [] as string[] },
+						content: [
+							{
+								type: "text",
+								text: "Provide either `recipe` or `layers`, not both.",
+							},
+						],
+						details: {
+							valid: false,
+							errors: ["both recipe and layers provided"],
+							missing: [] as string[],
+						},
 					};
 				}
 				const primitive = findRecipe(fileIndex, params.recipe);
 				if (!primitive) {
 					return {
-						content: [{
-							type: "text",
-							text: `Unknown recipe: "${params.recipe}". Run \`strudel_search\` to see what recipes are indexed.`,
-						}],
-						details: { valid: false, errors: [`unknown recipe: ${params.recipe}`], missing: [] as string[] },
+						content: [
+							{
+								type: "text",
+								text: `Unknown recipe: "${params.recipe}". Run \`strudel_search\` to see what recipes are indexed.`,
+							},
+						],
+						details: {
+							valid: false,
+							errors: [`unknown recipe: ${params.recipe}`],
+							missing: [] as string[],
+						},
 					};
 				}
-				let loaded;
+				let loaded: Awaited<ReturnType<typeof loadRecipe>>;
 				try {
 					loaded = await loadRecipe(primitive.source);
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
 					return {
-						content: [{ type: "text", text: `Failed to load recipe "${params.recipe}": ${msg}` }],
+						content: [
+							{
+								type: "text",
+								text: `Failed to load recipe "${params.recipe}": ${msg}`,
+							},
+						],
 						details: { valid: false, errors: [msg], missing: [] as string[] },
 					};
 				}
 				const check = checkParams(loaded, params.params ?? {});
 				if (!check.ok) {
 					return {
-						content: [{
-							type: "text",
-							text:
-								`Recipe "${params.recipe}" is missing params: ${check.missing.join(", ")}\n` +
-								`Declared params: ${loaded.params.join(", ") || "(none)"}`,
-						}],
-						details: { valid: false, missing: check.missing, errors: [`missing params: ${check.missing.join(", ")}`] },
+						content: [
+							{
+								type: "text",
+								text:
+									`Recipe "${params.recipe}" is missing params: ${check.missing.join(", ")}\n` +
+									`Declared params: ${loaded.params.join(", ") || "(none)"}`,
+							},
+						],
+						details: {
+							valid: false,
+							missing: check.missing,
+							errors: [`missing params: ${check.missing.join(", ")}`],
+						},
 					};
 				}
 				effectiveLayers = expandParams(loaded.layers, params.params ?? {});
-				const extraNote = check.extra.length > 0
-					? ` (unused params ignored: ${check.extra.join(", ")})`
-					: "";
+				const extraNote =
+					check.extra.length > 0
+						? ` (unused params ignored: ${check.extra.join(", ")})`
+						: "";
 				recipeExpansionNote = `Expanded from recipe \`${params.recipe}\`${extraNote}.\n`;
 
 				// Telemetry hook: the agent invoked this recipe via prep.
@@ -346,8 +394,17 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				effectiveLayers = params.layers as RecipeLayer[];
 			} else {
 				return {
-					content: [{ type: "text", text: `Provide either \`recipe\` (a Pantry recipe name) or \`layers\` (raw layer array).` }],
-					details: { valid: false, errors: ["no recipe or layers provided"], missing: [] as string[] },
+					content: [
+						{
+							type: "text",
+							text: "Provide either `recipe` (a Pantry recipe name) or `layers` (raw layer array).",
+						},
+					],
+					details: {
+						valid: false,
+						errors: ["no recipe or layers provided"],
+						missing: [] as string[],
+					},
 				};
 			}
 
@@ -377,7 +434,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			}
 
 			if (result.bindings.length > 0) {
-				text += `\nBindings:\n`;
+				text += "\nBindings:\n";
 				for (const b of result.bindings) {
 					text += `  ${b.valid ? "✓" : "✗"} Step ${b.step}: ${b.binding}`;
 					if (b.reason) text += ` — ${b.reason}`;
@@ -386,7 +443,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			}
 
 			if (result.errors.length > 0) {
-				text += `\nErrors:\n`;
+				text += "\nErrors:\n";
 				for (const e of result.errors) {
 					text += `  • ${e}\n`;
 				}
@@ -401,15 +458,17 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 					goal: params.goal,
 					layers: effectiveLayers,
 				};
-				text = recipeExpansionNote + text +
-					`\n\n--- Ready to bake ---\n` +
-					`Recipe validated. Next call:\n\n` +
-					`strudel_bake(${JSON.stringify(bakeCall, null, 2)})\n`;
+				text = `${
+					recipeExpansionNote + text
+				}\n\n--- Ready to bake ---\nRecipe validated. Next call:\n\nstrudel_bake(${JSON.stringify(bakeCall, null, 2)})\n`;
 			}
 
 			return {
 				content: [{ type: "text", text }],
-				details: { ...result, prepped: result.valid } as unknown as Record<string, unknown>,
+				details: { ...result, prepped: result.valid } as unknown as Record<
+					string,
+					unknown
+				>,
 			};
 		},
 	});
@@ -419,7 +478,10 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	// composed via prep are recognized by bake.
 	const preppedRecipes = new Set<string>();
 	const preppedRecipeNames = new Map<string, string>();
-	const recipeKey = (goal: string, layers: Array<{ step: number; ingredient: string }>): string =>
+	const recipeKey = (
+		goal: string,
+		layers: Array<{ step: number; ingredient: string }>,
+	): string =>
 		`${goal}§${layers.map((l) => `${l.step}:${l.ingredient}`).join("|")}`;
 
 	// Register the strudel_bake tool
@@ -439,13 +501,18 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			goal: Type.String({ description: "What the recipe accomplishes" }),
 			layers: Type.Array(
 				Type.Object({
-					step: Type.Number({ description: "Step number (1-indexed, execution order)" }),
-					ingredient: Type.String({ description: "Tool name, e.g. 'tool.read' or 'read'" }),
+					step: Type.Number({
+						description: "Step number (1-indexed, execution order)",
+					}),
+					ingredient: Type.String({
+						description: "Tool name, e.g. 'tool.read' or 'read'",
+					}),
 					inputs: Type.Record(Type.String(), Type.Unknown(), {
-						description: "Tool inputs. Use $N.field to reference output from step N.",
+						description:
+							"Tool inputs. Use $N.field to reference output from step N.",
 					}),
 				}),
-				{ description: "Recipe steps" }
+				{ description: "Recipe steps" },
 			),
 		}),
 		async execute(_toolCallId, params) {
@@ -509,12 +576,13 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			text += `Status: ${result.success ? "✓ Success" : "✗ Failed"}\n`;
 			text += `Duration: ${result.totalDurationMs}ms\n`;
 			if (showPrepWarning) {
-				text += `⚠  Baked without prep. The triad is search → prep → bake — ` +
-					`run strudel_prep first on multi-step recipes to validate tools and bindings before execution.\n`;
+				text +=
+					"⚠  Baked without prep. The triad is search → prep → bake — " +
+					"run strudel_prep first on multi-step recipes to validate tools and bindings before execution.\n";
 			}
-			text += `\n`;
+			text += "\n";
 
-			text += `Steps:\n`;
+			text += "Steps:\n";
 			for (const step of result.steps) {
 				const status = step.error ? "✗" : "✓";
 				text += `  ${status} Step ${step.step}: ${step.ingredient} (${step.durationMs}ms)\n`;
@@ -529,7 +597,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 
 			// Format final output
 			if (result.finalOutput !== null && result.finalOutput !== undefined) {
-				text += `\n--- Final Output ---\n`;
+				text += "\n--- Final Output ---\n";
 				if (typeof result.finalOutput === "object") {
 					// For objects, show a summary or the content field if present
 					const out = result.finalOutput as Record<string, unknown>;
@@ -547,7 +615,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 				content: [{ type: "text", text }],
 				details: {
 					success: result.success,
-					steps: result.steps.map(s => ({
+					steps: result.steps.map((s) => ({
 						step: s.step,
 						ingredient: s.ingredient,
 						durationMs: s.durationMs,

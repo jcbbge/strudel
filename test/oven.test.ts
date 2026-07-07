@@ -1,22 +1,22 @@
 /**
  * Oven unit tests — recipe validation and execution.
- * 
+ *
  * Uses temp directories with mock tools for isolation.
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	type Recipe,
 	bake,
-	prep,
+	expandTilde,
 	listTools,
 	normalizeName,
-	expandTilde,
-	setToolsDir,
+	prep,
 	resetToolsDir,
-	type Recipe,
+	setToolsDir,
 } from "../src/oven.js";
 
 let toolsDir: string;
@@ -90,7 +90,9 @@ describe("expandTilde", () => {
 	});
 
 	it("handles mixed types", () => {
-		expect(expandTilde({ paths: ["~/a", "~/b"], count: 42, flag: true })).toEqual({
+		expect(
+			expandTilde({ paths: ["~/a", "~/b"], count: 42, flag: true }),
+		).toEqual({
 			paths: [join(home, "a"), join(home, "b")],
 			count: 42,
 			flag: true,
@@ -231,7 +233,9 @@ describe("prep", () => {
 		});
 
 		expect(result.valid).toBe(false);
-		expect(result.errors.some(e => e.includes("Duplicate step numbers"))).toBe(true);
+		expect(
+			result.errors.some((e) => e.includes("Duplicate step numbers")),
+		).toBe(true);
 	});
 
 	it("detects invalid step references ($0)", async () => {
@@ -258,11 +262,14 @@ describe("prep", () => {
 
 describe("bake", () => {
 	it("executes a single-step recipe", async () => {
-		writeTool("echo", `
+		writeTool(
+			"echo",
+			`
 			export default async function(inputs: any) {
 				return { echoed: inputs.msg };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "echo test",
@@ -278,13 +285,16 @@ describe("bake", () => {
 
 	it("executes steps in order regardless of array order", async () => {
 		const log: number[] = [];
-		writeTool("log", `
+		writeTool(
+			"log",
+			`
 			const log: number[] = [];
 			export { log };
 			export default async function(inputs: any) {
 				return { step: inputs.n };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "order test",
@@ -296,20 +306,26 @@ describe("bake", () => {
 		});
 
 		expect(result.success).toBe(true);
-		expect(result.steps.map(s => s.step)).toEqual([1, 2, 3]);
+		expect(result.steps.map((s) => s.step)).toEqual([1, 2, 3]);
 	});
 
 	it("resolves $N bindings between steps", async () => {
-		writeTool("produce", `
+		writeTool(
+			"produce",
+			`
 			export default async function(inputs: any) {
 				return { value: inputs.x * 2 };
 			}
-		`);
-		writeTool("consume", `
+		`,
+		);
+		writeTool(
+			"consume",
+			`
 			export default async function(inputs: any) {
 				return { result: inputs.v + 10 };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "binding test",
@@ -326,16 +342,22 @@ describe("bake", () => {
 	});
 
 	it("resolves $N for entire output (no field)", async () => {
-		writeTool("produce", `
+		writeTool(
+			"produce",
+			`
 			export default async function() {
 				return { a: 1, b: 2 };
 			}
-		`);
-		writeTool("consume", `
+		`,
+		);
+		writeTool(
+			"consume",
+			`
 			export default async function(inputs: any) {
 				return { got: inputs.data };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "whole output binding",
@@ -350,22 +372,32 @@ describe("bake", () => {
 	});
 
 	it("resolves nested field paths ($1.foo.bar)", async () => {
-		writeTool("produce", `
+		writeTool(
+			"produce",
+			`
 			export default async function() {
 				return { nested: { deep: { value: 42 } } };
 			}
-		`);
-		writeTool("consume", `
+		`,
+		);
+		writeTool(
+			"consume",
+			`
 			export default async function(inputs: any) {
 				return { result: inputs.x };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "nested binding",
 			layers: [
 				{ step: 1, ingredient: "produce", inputs: {} },
-				{ step: 2, ingredient: "consume", inputs: { x: "$1.nested.deep.value" } },
+				{
+					step: 2,
+					ingredient: "consume",
+					inputs: { x: "$1.nested.deep.value" },
+				},
 			],
 		});
 
@@ -374,7 +406,9 @@ describe("bake", () => {
 	});
 
 	it("expands tildes in inputs", async () => {
-		writeTool("checkpath", `
+		writeTool(
+			"checkpath",
+			`
 			import { homedir } from "node:os";
 			export default async function(inputs: any) {
 				const home = homedir();
@@ -383,11 +417,14 @@ describe("bake", () => {
 					path: inputs.path 
 				};
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "tilde expansion",
-			layers: [{ step: 1, ingredient: "checkpath", inputs: { path: "~/.config" } }],
+			layers: [
+				{ step: 1, ingredient: "checkpath", inputs: { path: "~/.config" } },
+			],
 		});
 
 		expect(result.success).toBe(true);
@@ -395,16 +432,22 @@ describe("bake", () => {
 	});
 
 	it("stops on first error", async () => {
-		writeTool("fail", `
+		writeTool(
+			"fail",
+			`
 			export default async function() {
 				throw new Error("intentional failure");
 			}
-		`);
-		writeTool("never", `
+		`,
+		);
+		writeTool(
+			"never",
+			`
 			export default async function() {
 				return { reached: true };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "error handling",
@@ -431,7 +474,7 @@ describe("bake", () => {
 	});
 
 	it("fails on invalid binding reference", async () => {
-		writeTool("a", `export default async () => ({ x: 1 })`);
+		writeTool("a", "export default async () => ({ x: 1 })");
 
 		const result = await bake({
 			goal: "bad binding",
@@ -446,12 +489,15 @@ describe("bake", () => {
 	});
 
 	it("records duration for each step", async () => {
-		writeTool("slow", `
+		writeTool(
+			"slow",
+			`
 			export default async function() {
 				await new Promise(r => setTimeout(r, 50));
 				return {};
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "timing",
@@ -464,15 +510,20 @@ describe("bake", () => {
 	});
 
 	it("handles tool.* prefix in ingredient names", async () => {
-		writeTool("read", `
+		writeTool(
+			"read",
+			`
 			export default async function(inputs: any) {
 				return { file: inputs.path };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "prefix test",
-			layers: [{ step: 1, ingredient: "tool.read", inputs: { path: "/tmp/x" } }],
+			layers: [
+				{ step: 1, ingredient: "tool.read", inputs: { path: "/tmp/x" } },
+			],
 		});
 
 		expect(result.success).toBe(true);
@@ -486,11 +537,14 @@ describe("bake", () => {
 
 describe("prep then bake workflow", () => {
 	it("prep passes for recipes that bake successfully", async () => {
-		writeTool("double", `
+		writeTool(
+			"double",
+			`
 			export default async function(inputs: any) {
 				return { value: inputs.n * 2 };
 			}
-		`);
+		`,
+		);
 
 		const recipe: Recipe = {
 			goal: "double twice",
@@ -511,9 +565,7 @@ describe("prep then bake workflow", () => {
 	it("prep catches what bake would fail on", async () => {
 		const recipe: Recipe = {
 			goal: "will fail",
-			layers: [
-				{ step: 1, ingredient: "missing", inputs: {} },
-			],
+			layers: [{ step: 1, ingredient: "missing", inputs: {} }],
 		};
 
 		const prepResult = await prep(recipe);
@@ -530,13 +582,16 @@ describe("prep then bake workflow", () => {
 
 describe("tool caching", () => {
 	it("loads the same tool only once across multiple steps", async () => {
-		let loadCount = 0;
-		writeTool("counter", `
+		const loadCount = 0;
+		writeTool(
+			"counter",
+			`
 			global.loadCount = (global.loadCount || 0) + 1;
 			export default async function(inputs: any) {
 				return { count: global.loadCount, x: inputs.x };
 			}
-		`);
+		`,
+		);
 
 		const result = await bake({
 			goal: "use same tool twice",
@@ -549,7 +604,7 @@ describe("tool caching", () => {
 
 		expect(result.success).toBe(true);
 		// All steps should see the same loadCount (tool loaded once)
-		const counts = result.steps.map(s => (s.output as any).count);
+		const counts = result.steps.map((s) => (s.output as any).count);
 		expect(new Set(counts).size).toBe(1);
 	});
 });
@@ -567,7 +622,7 @@ describe("edge cases", () => {
 	});
 
 	it("handles non-sequential step numbers", async () => {
-		writeTool("id", `export default async (i: any) => i`);
+		writeTool("id", "export default async (i: any) => i");
 
 		const result = await bake({
 			goal: "gaps in steps",
@@ -580,11 +635,11 @@ describe("edge cases", () => {
 
 		expect(result.success).toBe(true);
 		// Should execute in order: 5, 10, 100
-		expect(result.steps.map(s => s.step)).toEqual([5, 10, 100]);
+		expect(result.steps.map((s) => s.step)).toEqual([5, 10, 100]);
 	});
 
 	it("provides useful error for tool that doesn't export default", async () => {
-		writeTool("nodefault", `export const x = 1;`);
+		writeTool("nodefault", "export const x = 1;");
 
 		const result = await bake({
 			goal: "bad tool",
@@ -596,7 +651,7 @@ describe("edge cases", () => {
 	});
 
 	it("provides useful error for syntax error in tool", async () => {
-		writeTool("badsyntax", `export default async function( { broken`);
+		writeTool("badsyntax", "export default async function( { broken");
 
 		const result = await bake({
 			goal: "syntax error",
@@ -609,7 +664,7 @@ describe("edge cases", () => {
 
 	it("bindings don't resolve inside array elements", async () => {
 		// Bindings only resolve string values that START with $, not embedded
-		writeTool("arr", `export default async (i: any) => i`);
+		writeTool("arr", "export default async (i: any) => i");
 
 		const result = await bake({
 			goal: "array with bindings",
@@ -625,7 +680,7 @@ describe("edge cases", () => {
 	});
 
 	it("handles very long goal strings", async () => {
-		writeTool("ok", `export default async () => ({ ok: true })`);
+		writeTool("ok", "export default async () => ({ ok: true })");
 		const longGoal = "x".repeat(10000);
 
 		const result = await bake({

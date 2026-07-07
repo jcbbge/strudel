@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AMBIENT_KINDS, expandHome } from "../pantry.js";
-import { getState, STRUDEL_VERSION } from "../state.js";
+import { STRUDEL_VERSION, getState } from "../state.js";
 
 export function registerStatusCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("strudel", {
@@ -26,17 +26,12 @@ export function registerStatusCommand(pi: ExtensionAPI): void {
 				const subArgs = rest.join(" ");
 				// Find and invoke the subcommand
 				const commands = pi.getCommands();
-				const target = commands.find(
-					(c) => c.name === `strudel-${subcommand}`,
-				);
+				const target = commands.find((c) => c.name === `strudel-${subcommand}`);
 				if (target) {
 					// Invoke the subcommand handler directly
 					// We need to get the actual handler, which isn't exposed via getCommands()
 					// So we use a workaround: notify user to use the full command
-					ctx.ui.notify(
-						`Use /strudel-${subcommand} ${subArgs}`.trim(),
-						"info",
-					);
+					ctx.ui.notify(`Use /strudel-${subcommand} ${subArgs}`.trim(), "info");
 					return;
 				}
 				ctx.ui.notify(
@@ -71,8 +66,9 @@ export function registerStatusCommand(pi: ExtensionAPI): void {
 				} catch {
 					// doesn't exist
 				}
-				const count = fileIndex.filter((p) => p.source.startsWith(expanded))
-					.length;
+				const count = fileIndex.filter((p) =>
+					p.source.startsWith(expanded),
+				).length;
 				rootStatus.push({ path: root, exists, count });
 			}
 

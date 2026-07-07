@@ -10,16 +10,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { indexRoots } from "../src/pantry.js";
-import { initState, type StrudelConfig, STRUDEL_VERSION } from "../src/state.js";
+import {
+	STRUDEL_VERSION,
+	type StrudelConfig,
+	initState,
+} from "../src/state.js";
 
 // Mock ExtensionAPI
 function createMockPi() {
 	const messages: Array<{ customType: string; content: string }> = [];
-	const commands: Array<{ name: string; description: string; handler: Function }> = [];
+	const commands: Array<{
+		name: string;
+		description: string;
+		handler: Function;
+	}> = [];
 
 	return {
-		registerCommand(name: string, opts: { description: string; handler: Function }) {
-			commands.push({ name, description: opts.description, handler: opts.handler });
+		registerCommand(
+			name: string,
+			opts: { description: string; handler: Function },
+		) {
+			commands.push({
+				name,
+				description: opts.description,
+				handler: opts.handler,
+			});
 		},
 		sendMessage(msg: { customType: string; content: string }) {
 			messages.push(msg);
@@ -32,7 +47,8 @@ function createMockPi() {
 			{ name: "strudel_search", description: "Search pantry" },
 			{ name: "suppressed_tool", description: "Should be suppressed" },
 		],
-		getCommands: () => commands.map((c) => ({ name: c.name, description: c.description })),
+		getCommands: () =>
+			commands.map((c) => ({ name: c.name, description: c.description })),
 		// Test helpers
 		_messages: messages,
 		_commands: commands,

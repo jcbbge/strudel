@@ -7,7 +7,12 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { indexRoots, isOnDemand, lexicalSearch, expandHome } from "../src/pantry.js";
+import {
+	expandHome,
+	indexRoots,
+	isOnDemand,
+	lexicalSearch,
+} from "../src/pantry.js";
 
 let root: string;
 

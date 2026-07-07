@@ -31,10 +31,7 @@ export function defaultInventoryLine(
 	const kindSummary = [...byKind.entries()]
 		.map(([k, n]) => `${k}:${n}`)
 		.join(" ");
-	return (
-		`Pantry: ${total} indexed capabilities (${kindSummary}). ` +
-		`Your visible tools are a cache, not your inventory — strudel_search finds the rest.`
-	);
+	return `Pantry: ${total} indexed capabilities (${kindSummary}). Your visible tools are a cache, not your inventory — strudel_search finds the rest.`;
 }
 
 /**

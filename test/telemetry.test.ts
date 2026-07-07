@@ -8,7 +8,13 @@
  * the real ~/.strudel is never touched.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,12 +23,12 @@ import { resetToolsDir, setToolsDir } from "../src/oven.js";
 import type { Ranked } from "../src/pantry.js";
 import { search } from "../src/search.js";
 import {
-	decay,
 	HALF_LIFE_MS,
 	MAX_LINES,
-	redactQuery,
 	Telemetry,
 	type TelemetryEvent,
+	decay,
+	redactQuery,
 } from "../src/telemetry.js";
 
 const DAY_MS = 86_400_000;
@@ -48,7 +54,9 @@ afterEach(() => {
 	resetToolsDir();
 });
 
-function tel(overrides: Partial<ConstructorParameters<typeof Telemetry>[0]> = {}): Telemetry {
+function tel(
+	overrides: Partial<ConstructorParameters<typeof Telemetry>[0]> = {},
+): Telemetry {
 	return new Telemetry({ logPath, now: fixedNow, ...overrides });
 }
 
@@ -64,11 +72,24 @@ function seedWin(primitive: string, daysAgo: number, session = "s1"): void {
 	const w = writerAt(daysAgo);
 	w.recordSurface({ session, query: "q", primitive, rank: 1, score: 0.9 });
 	w.recordInvoke({ session, primitive, via: "bake", surfaced: true });
-	w.recordOutcome({ session, primitive, ok: true, error: null, stepsRun: 1, stepsTotal: 1 });
+	w.recordOutcome({
+		session,
+		primitive,
+		ok: true,
+		error: null,
+		stepsRun: 1,
+		stepsTotal: 1,
+	});
 }
 
 function hit(name: string, score: number, kind = "recipe"): Ranked {
-	return { name, kind, description: `${name} desc`, source: `test:${name}`, score };
+	return {
+		name,
+		kind,
+		description: `${name} desc`,
+		source: `test:${name}`,
+		score,
+	};
 }
 
 const noExplore = () => 0.99;
@@ -82,7 +103,9 @@ describe("redaction", () => {
 	});
 
 	it("redacts /Users/<name> to ~", () => {
-		expect(redactQuery("read /Users/jrg/notes.md please")).toBe("read ~/notes.md please");
+		expect(redactQuery("read /Users/jrg/notes.md please")).toBe(
+			"read ~/notes.md please",
+		);
 	});
 
 	it("drops secret-looking tokens", () => {
@@ -102,7 +125,9 @@ describe("redaction", () => {
 			rank: 1,
 			score: 0.5,
 		});
-		const [e] = t.readEvents() as Array<Extract<TelemetryEvent, { kind: "surface" }>>;
+		const [e] = t.readEvents() as Array<
+			Extract<TelemetryEvent, { kind: "surface" }>
+		>;
 		expect(e.query).not.toContain("hunter2");
 		expect(e.query).not.toContain("/Users/");
 		expect(e.query.length).toBeLessThanOrEqual(120);
@@ -164,7 +189,10 @@ describe("acceptance 2: wins lift ranking iff the semantic gap is small enough",
 
 describe("acceptance 3: decay", () => {
 	it("decay() halves at 14 days", () => {
-		expect(decay(NOW.getTime() - HALF_LIFE_MS, NOW.getTime())).toBeCloseTo(0.5, 10);
+		expect(decay(NOW.getTime() - HALF_LIFE_MS, NOW.getTime())).toBeCloseTo(
+			0.5,
+			10,
+		);
 	});
 
 	it("a 15-day-old win counts less than half a fresh win", () => {
@@ -197,7 +225,11 @@ describe("acceptance 4: audit penalty demotes below a semantically-equal rival",
 	});
 
 	it("with an audit penalty on A, B ranks above A", () => {
-		tel().recordAudit({ primitive: "recipe:a", penalty: 0.5, task: "exp-bake-01" });
+		tel().recordAudit({
+			primitive: "recipe:a",
+			penalty: 0.5,
+			task: "exp-bake-01",
+		});
 		const out = tel().rerank([hit("a", 0.7), hit("b", 0.7)], noExplore);
 		expect(out.map((h) => h.name)).toEqual(["b", "a"]);
 	});
@@ -216,15 +248,43 @@ describe("acceptance 5: compaction at the size cap preserves aggregates", () => 
 			const kindPick = i % 4;
 			if (kindPick === 0) {
 				lines.push(
-					JSON.stringify({ v: 1, kind: "surface", ts, session: "s", query: "q", primitive, rank: 1, score: 0.5 }),
+					JSON.stringify({
+						v: 1,
+						kind: "surface",
+						ts,
+						session: "s",
+						query: "q",
+						primitive,
+						rank: 1,
+						score: 0.5,
+					}),
 				);
 			} else if (kindPick === 1) {
 				lines.push(
-					JSON.stringify({ v: 1, kind: "invoke", ts, session: "s", primitive, via: "bake", surfaced: true, latency_from_surface_ms: 10 }),
+					JSON.stringify({
+						v: 1,
+						kind: "invoke",
+						ts,
+						session: "s",
+						primitive,
+						via: "bake",
+						surfaced: true,
+						latency_from_surface_ms: 10,
+					}),
 				);
 			} else {
 				lines.push(
-					JSON.stringify({ v: 1, kind: "outcome", ts, session: "s", primitive, ok: kindPick === 2, error: kindPick === 2 ? null : "step_failed:1", steps_run: 1, steps_total: 1 }),
+					JSON.stringify({
+						v: 1,
+						kind: "outcome",
+						ts,
+						session: "s",
+						primitive,
+						ok: kindPick === 2,
+						error: kindPick === 2 ? null : "step_failed:1",
+						steps_run: 1,
+						steps_total: 1,
+					}),
 				);
 			}
 		}
@@ -233,12 +293,20 @@ describe("acceptance 5: compaction at the size cap preserves aggregates", () => 
 		const t = tel();
 		const before = t.aggregate();
 		// Append one event for an unrelated primitive — trips the line cap.
-		t.recordSurface({ session: "s", query: "q", primitive: "recipe:new", rank: 1, score: 0.5 });
+		t.recordSurface({
+			session: "s",
+			query: "q",
+			primitive: "recipe:new",
+			rank: 1,
+			score: 0.5,
+		});
 
 		const content = readFileSync(logPath, "utf-8").trim().split("\n");
 		expect(content.length).toBeLessThan(200); // O(primitives × days), not O(events)
 		expect(content.length).toBeGreaterThan(prims.length); // real rollups exist
-		const rollups = content.map((l) => JSON.parse(l)).filter((e) => e.kind === "rollup");
+		const rollups = content
+			.map((l) => JSON.parse(l))
+			.filter((e) => e.kind === "rollup");
 		expect(rollups.length).toBeGreaterThan(0);
 
 		const after = t.aggregate();
@@ -285,9 +353,27 @@ describe("exploration slot", () => {
 describe("kill switch", () => {
 	it("enabled:false writes nothing and reranks as identity", () => {
 		const t = tel({ enabled: false });
-		t.recordSurface({ session: "s", query: "q", primitive: "recipe:a", rank: 1, score: 0.5 });
-		t.recordInvoke({ session: "s", primitive: "recipe:a", via: "bake", surfaced: false });
-		t.recordOutcome({ session: "s", primitive: "recipe:a", ok: true, error: null, stepsRun: 1, stepsTotal: 1 });
+		t.recordSurface({
+			session: "s",
+			query: "q",
+			primitive: "recipe:a",
+			rank: 1,
+			score: 0.5,
+		});
+		t.recordInvoke({
+			session: "s",
+			primitive: "recipe:a",
+			via: "bake",
+			surfaced: false,
+		});
+		t.recordOutcome({
+			session: "s",
+			primitive: "recipe:a",
+			ok: true,
+			error: null,
+			stepsRun: 1,
+			stepsTotal: 1,
+		});
 		expect(existsSync(logPath)).toBe(false);
 		const hits = [hit("a", 0.9), hit("b", 0.5)];
 		expect(t.rerank(hits, noExplore)).toBe(hits);
@@ -298,9 +384,23 @@ describe("kill switch", () => {
 // Integration — search → bake through the registered tools on a mock Pi
 
 function createMockPi() {
-	const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+	const tools = new Map<
+		string,
+		{
+			execute: (
+				id: string,
+				params: Record<string, unknown>,
+			) => Promise<unknown>;
+		}
+	>();
 	return {
-		registerTool(t: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+		registerTool(t: {
+			name: string;
+			execute: (
+				id: string,
+				params: Record<string, unknown>,
+			) => Promise<unknown>;
+		}) {
 			tools.set(t.name, t);
 		},
 		registerCommand(_name: string, _opts: unknown) {},
@@ -320,7 +420,10 @@ async function loadExtension(config: Record<string, unknown>) {
 	const configPath = join(testRoot, "config.json");
 	const pantryRoot = join(testRoot, "pantry");
 	mkdirSync(pantryRoot, { recursive: true });
-	writeFileSync(configPath, JSON.stringify({ pantry: { roots: [pantryRoot] }, ...config }));
+	writeFileSync(
+		configPath,
+		JSON.stringify({ pantry: { roots: [pantryRoot] }, ...config }),
+	);
 	process.env.STRUDEL_CONFIG_PATH = configPath;
 	process.env.STRUDEL_TELEMETRY_PATH = logPath;
 
@@ -341,7 +444,9 @@ describe("integration: search → bake hooks", () => {
 	it("logs surface, invoke, and outcome events to the configured log", async () => {
 		const pi = await loadExtension({});
 
-		await pi._tool("strudel_search")?.execute("t1", { query: "read files from disk" });
+		await pi
+			._tool("strudel_search")
+			?.execute("t1", { query: "read files from disk" });
 		await pi._tool("strudel_bake")?.execute("t2", {
 			goal: "test bake",
 			layers: [{ step: 1, ingredient: "ok", inputs: {} }],
@@ -376,7 +481,9 @@ describe("integration: search → bake hooks", () => {
 	it("telemetry:false produces zero writes", async () => {
 		const pi = await loadExtension({ telemetry: false });
 
-		await pi._tool("strudel_search")?.execute("t1", { query: "read files from disk" });
+		await pi
+			._tool("strudel_search")
+			?.execute("t1", { query: "read files from disk" });
 		await pi._tool("strudel_bake")?.execute("t2", {
 			goal: "test bake",
 			layers: [{ step: 1, ingredient: "ok", inputs: {} }],

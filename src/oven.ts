@@ -6,8 +6,8 @@
  */
 
 import { existsSync, readdirSync } from "node:fs";
-import { join, basename, extname } from "node:path";
 import { homedir } from "node:os";
+import { basename, extname, join } from "node:path";
 import { createJiti } from "jiti";
 
 let TOOLS_DIR = join(homedir(), ".strudel", "tools");
@@ -29,7 +29,7 @@ async function persistWorkspaceState(): Promise<void> {
 	try {
 		const wsPath = join(TOOLS_DIR, "_lib", "workspace.ts");
 		if (!existsSync(wsPath)) return;
-		const ws = await jiti.import(wsPath) as { persistWorkspace?: () => void };
+		const ws = (await jiti.import(wsPath)) as { persistWorkspace?: () => void };
 		if (typeof ws.persistWorkspace === "function") {
 			ws.persistWorkspace();
 		}
@@ -88,7 +88,10 @@ export interface BakeResult {
 }
 
 // Tool cache — loaded once per session
-const toolCache = new Map<string, (inputs: Record<string, unknown>) => Promise<unknown>>();
+const toolCache = new Map<
+	string,
+	(inputs: Record<string, unknown>) => Promise<unknown>
+>();
 
 /**
  * Normalize tool name: "tool.read" -> "read", "read" -> "read"
@@ -105,11 +108,14 @@ const jiti = createJiti(import.meta.url, {
 /**
  * Load a tool from ~/.strudel/tools/
  */
-async function loadTool(name: string): Promise<(inputs: Record<string, unknown>) => Promise<unknown>> {
+async function loadTool(
+	name: string,
+): Promise<(inputs: Record<string, unknown>) => Promise<unknown>> {
 	const normalized = normalizeName(name);
-	
-	if (toolCache.has(normalized)) {
-		return toolCache.get(normalized)!;
+
+	const cached = toolCache.get(normalized);
+	if (cached) {
+		return cached;
 	}
 
 	const toolPath = join(TOOLS_DIR, `${normalized}.ts`);
@@ -125,7 +131,10 @@ async function loadTool(name: string): Promise<(inputs: Record<string, unknown>)
 		throw new Error(`Tool ${name} does not export a default function`);
 	}
 
-	toolCache.set(normalized, fn as (inputs: Record<string, unknown>) => Promise<unknown>);
+	toolCache.set(
+		normalized,
+		fn as (inputs: Record<string, unknown>) => Promise<unknown>,
+	);
 	return fn as (inputs: Record<string, unknown>) => Promise<unknown>;
 }
 
@@ -134,15 +143,15 @@ async function loadTool(name: string): Promise<(inputs: Record<string, unknown>)
  */
 export function listTools(): string[] {
 	if (!existsSync(TOOLS_DIR)) return [];
-	
+
 	return readdirSync(TOOLS_DIR)
-		.filter(f => f.endsWith(".ts") && !f.startsWith("_"))
-		.map(f => basename(f, extname(f)));
+		.filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
+		.map((f) => basename(f, extname(f)));
 }
 
 /**
  * Resolve $N.field bindings in an object against previous step results.
- * 
+ *
  * Examples:
  *   "$1.path" -> stepResults[0].output.path
  *   "$2.content" -> stepResults[1].output.content
@@ -150,15 +159,22 @@ export function listTools(): string[] {
  */
 function resolveBindings(
 	obj: Record<string, unknown>,
-	stepResults: StepResult[]
+	stepResults: StepResult[],
 ): Record<string, unknown> {
 	const resolved: Record<string, unknown> = {};
 
 	for (const [key, value] of Object.entries(obj)) {
 		if (typeof value === "string" && value.startsWith("$")) {
 			resolved[key] = resolveBinding(value, stepResults);
-		} else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-			resolved[key] = resolveBindings(value as Record<string, unknown>, stepResults);
+		} else if (
+			typeof value === "object" &&
+			value !== null &&
+			!Array.isArray(value)
+		) {
+			resolved[key] = resolveBindings(
+				value as Record<string, unknown>,
+				stepResults,
+			);
 		} else {
 			resolved[key] = value;
 		}
@@ -171,11 +187,13 @@ function resolveBinding(binding: string, stepResults: StepResult[]): unknown {
 	const match = binding.match(/^\$(\d+)(?:\.(.+))?$/);
 	if (!match) return binding; // Not a binding, return as-is
 
-	const stepNum = parseInt(match[1], 10);
+	const stepNum = Number.parseInt(match[1], 10);
 	const fieldPath = match[2];
 
 	if (stepNum < 1 || stepNum > stepResults.length) {
-		throw new Error(`Invalid binding ${binding}: step ${stepNum} doesn't exist (only ${stepResults.length} steps completed)`);
+		throw new Error(
+			`Invalid binding ${binding}: step ${stepNum} doesn't exist (only ${stepResults.length} steps completed)`,
+		);
 	}
 
 	const stepOutput = stepResults[stepNum - 1].output;
@@ -186,10 +204,14 @@ function resolveBinding(binding: string, stepResults: StepResult[]): unknown {
 	let current: unknown = stepOutput;
 	for (const part of fieldPath.split(".")) {
 		if (current === null || current === undefined) {
-			throw new Error(`Binding ${binding}: cannot access '${part}' on ${current}`);
+			throw new Error(
+				`Binding ${binding}: cannot access '${part}' on ${current}`,
+			);
 		}
 		if (typeof current !== "object") {
-			throw new Error(`Binding ${binding}: cannot access '${part}' on non-object`);
+			throw new Error(
+				`Binding ${binding}: cannot access '${part}' on non-object`,
+			);
 		}
 		current = (current as Record<string, unknown>)[part];
 	}
@@ -208,17 +230,19 @@ export async function bake(recipe: Recipe): Promise<BakeResult> {
 
 	for (const layer of recipe.layers.sort((a, b) => a.step - b.step)) {
 		const stepStart = Date.now();
-		
+
 		try {
 			// Load the tool
 			const tool = await loadTool(layer.ingredient);
-			
+
 			// Resolve any bindings in the inputs, then expand tildes
-			const resolvedInputs = expandTilde(resolveBindings(layer.inputs, stepResults)) as Record<string, unknown>;
-			
+			const resolvedInputs = expandTilde(
+				resolveBindings(layer.inputs, stepResults),
+			) as Record<string, unknown>;
+
 			// Execute
 			const output = await tool(resolvedInputs);
-			
+
 			stepResults.push({
 				step: layer.step,
 				ingredient: layer.ingredient,
@@ -226,7 +250,7 @@ export async function bake(recipe: Recipe): Promise<BakeResult> {
 				output,
 				durationMs: Date.now() - stepStart,
 			});
-			
+
 			finalOutput = output;
 		} catch (err) {
 			const errMsg = err instanceof Error ? err.message : String(err);
@@ -262,12 +286,22 @@ export async function bake(recipe: Recipe): Promise<BakeResult> {
 export async function prep(recipe: Recipe): Promise<{
 	valid: boolean;
 	tools: Array<{ name: string; found: boolean }>;
-	bindings: Array<{ step: number; binding: string; valid: boolean; reason?: string }>;
+	bindings: Array<{
+		step: number;
+		binding: string;
+		valid: boolean;
+		reason?: string;
+	}>;
 	errors: string[];
 }> {
 	const errors: string[] = [];
 	const tools: Array<{ name: string; found: boolean }> = [];
-	const bindings: Array<{ step: number; binding: string; valid: boolean; reason?: string }> = [];
+	const bindings: Array<{
+		step: number;
+		binding: string;
+		valid: boolean;
+		reason?: string;
+	}> = [];
 
 	const availableTools = new Set(listTools());
 
@@ -276,7 +310,7 @@ export async function prep(recipe: Recipe): Promise<{
 		const normalized = normalizeName(layer.ingredient);
 		const found = availableTools.has(normalized);
 		tools.push({ name: layer.ingredient, found });
-		
+
 		if (!found) {
 			errors.push(`Step ${layer.step}: tool '${layer.ingredient}' not found`);
 		}
@@ -286,7 +320,7 @@ export async function prep(recipe: Recipe): Promise<{
 			if (typeof value === "string" && value.startsWith("$")) {
 				const match = value.match(/^\$(\d+)/);
 				if (match) {
-					const refStep = parseInt(match[1], 10);
+					const refStep = Number.parseInt(match[1], 10);
 					if (refStep >= layer.step) {
 						bindings.push({
 							step: layer.step,
@@ -294,7 +328,9 @@ export async function prep(recipe: Recipe): Promise<{
 							valid: false,
 							reason: `References step ${refStep} which hasn't executed yet`,
 						});
-						errors.push(`Step ${layer.step}: binding '${value}' references future step ${refStep}`);
+						errors.push(
+							`Step ${layer.step}: binding '${value}' references future step ${refStep}`,
+						);
 					} else if (refStep < 1) {
 						bindings.push({
 							step: layer.step,
@@ -312,10 +348,12 @@ export async function prep(recipe: Recipe): Promise<{
 	}
 
 	// Check for duplicate step numbers
-	const stepNums = recipe.layers.map(l => l.step);
+	const stepNums = recipe.layers.map((l) => l.step);
 	const duplicates = stepNums.filter((n, i) => stepNums.indexOf(n) !== i);
 	if (duplicates.length > 0) {
-		errors.push(`Duplicate step numbers: ${[...new Set(duplicates)].join(", ")}`);
+		errors.push(
+			`Duplicate step numbers: ${[...new Set(duplicates)].join(", ")}`,
+		);
 	}
 
 	return {

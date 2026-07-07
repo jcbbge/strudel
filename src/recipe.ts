@@ -14,8 +14,8 @@
 
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import type { Primitive } from "./pantry.js";
 import type { RecipeLayer } from "./oven.js";
+import type { Primitive } from "./pantry.js";
 
 export interface Recipe {
 	name: string;
@@ -44,7 +44,10 @@ export async function loadRecipe(source: string): Promise<Recipe> {
 	return parsed;
 }
 
-function validateShape(r: Partial<Recipe>, source: string): asserts r is Recipe {
+function validateShape(
+	r: Partial<Recipe>,
+	source: string,
+): asserts r is Recipe {
 	if (!r.name || typeof r.name !== "string") {
 		throw new Error(`Recipe ${source}: missing or invalid 'name'`);
 	}
@@ -97,7 +100,9 @@ function parseMarkdownRecipe(raw: string, source: string): Partial<Recipe> {
 	}
 
 	// Multiline `when_to_use: |` block
-	const wtuMatch = block.match(/^when_to_use\s*:\s*\|\s*\r?\n([\s\S]*?)(?=^\w+\s*:|\Z)/m);
+	const wtuMatch = block.match(
+		/^when_to_use\s*:\s*\|\s*\r?\n([\s\S]*?)(?=^\w+\s*:|\Z)/m,
+	);
 	if (wtuMatch) {
 		out.when_to_use = wtuMatch[1]
 			.split(/\r?\n/)
@@ -128,7 +133,10 @@ function parseMarkdownRecipe(raw: string, source: string): Partial<Recipe> {
 
 function unquote(s: string): string {
 	const t = s.trim();
-	if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+	if (
+		(t.startsWith('"') && t.endsWith('"')) ||
+		(t.startsWith("'") && t.endsWith("'"))
+	) {
 		return t.slice(1, -1);
 	}
 	return t;
@@ -238,12 +246,20 @@ export function checkParams(
 }
 
 /** Find a recipe primitive in the file index by name. */
-export function findRecipe(index: Primitive[], name: string): Primitive | undefined {
+export function findRecipe(
+	index: Primitive[],
+	name: string,
+): Primitive | undefined {
 	return index.find((p) => p.kind === "recipe" && p.name === name);
 }
 
 /** Convenience: extension check to know if a primitive source is a recipe file. */
 export function isRecipeSource(source: string): boolean {
 	const b = basename(source).toLowerCase();
-	return b.endsWith(".json") || b.endsWith(".md") || b.endsWith(".mdx") || b.endsWith(".markdown");
+	return (
+		b.endsWith(".json") ||
+		b.endsWith(".md") ||
+		b.endsWith(".mdx") ||
+		b.endsWith(".markdown")
+	);
 }

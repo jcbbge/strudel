@@ -2,7 +2,7 @@
  * State module tests — init/get/has lifecycle.
  */
 
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // We need to test the module fresh each time, so we use dynamic imports
 // to avoid cached state between tests.
@@ -25,7 +25,7 @@ describe("state", () => {
 		// This test is tricky because state may be initialized from other tests
 		// We test the error message format instead
 		const { getState, hasState, initState } = await import("../src/state.js");
-		
+
 		// If state is already initialized (from other tests), this passes trivially
 		if (!hasState()) {
 			expect(() => getState()).toThrow("Strudel state not initialized");
@@ -34,12 +34,12 @@ describe("state", () => {
 
 	it("initState + getState round-trips", async () => {
 		const { initState, getState, hasState } = await import("../src/state.js");
-		
+
 		const mockPi = {
 			getAllTools: () => [],
 			getCommands: () => [],
 		} as any;
-		
+
 		const testState = {
 			config: { roots: ["/test"], surface: "pragmatic" as const },
 			fileIndex: [],
@@ -47,9 +47,9 @@ describe("state", () => {
 			baseline: ["read"],
 			pi: mockPi,
 		};
-		
+
 		initState(testState);
-		
+
 		expect(hasState()).toBe(true);
 		expect(getState()).toBe(testState);
 		expect(getState().config.roots).toEqual(["/test"]);

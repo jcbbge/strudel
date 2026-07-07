@@ -26,7 +26,12 @@ describe("baselineTools", () => {
 		]);
 	});
 	it("strict keeps the bare minimum + infrastructure", () => {
-		expect(baselineTools("strict")).toEqual(["read", "subagent", "strudel_prep", "strudel_bake"]);
+		expect(baselineTools("strict")).toEqual([
+			"read",
+			"subagent",
+			"strudel_prep",
+			"strudel_bake",
+		]);
 	});
 	it("an explicit override wins", () => {
 		expect(baselineTools("pragmatic", ["read", "grep"])).toEqual([

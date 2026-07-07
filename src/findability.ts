@@ -8,7 +8,7 @@
  * their own intents can surface.
  */
 
-import { isOnDemand, type Primitive } from "./pantry.js";
+import { type Primitive, isOnDemand } from "./pantry.js";
 
 /** Hard ceiling on search calls per self-test run — sample primitives if exceeded. */
 export const MAX_SEARCHES = 300;

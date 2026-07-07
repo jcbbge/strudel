@@ -20,10 +20,18 @@ import {
 
 // Mock ExtensionAPI capturing tool registrations and event handlers
 function createMockPi() {
-	const tools: Array<{ name: string; description: string; promptSnippet?: string }> = [];
+	const tools: Array<{
+		name: string;
+		description: string;
+		promptSnippet?: string;
+	}> = [];
 	const handlers = new Map<string, Function>();
 	return {
-		registerTool(t: { name: string; description: string; promptSnippet?: string }) {
+		registerTool(t: {
+			name: string;
+			description: string;
+			promptSnippet?: string;
+		}) {
 			tools.push(t);
 		},
 		registerCommand() {},
@@ -31,7 +39,8 @@ function createMockPi() {
 			handlers.set(event, handler);
 		},
 		setActiveTools() {},
-		getAllTools: () => tools.map((t) => ({ name: t.name, description: t.description })),
+		getAllTools: () =>
+			tools.map((t) => ({ name: t.name, description: t.description })),
 		getCommands: () => [],
 		// Test helpers
 		_tools: tools,
@@ -50,7 +59,10 @@ function writeConfig(cfg: Record<string, unknown>): string {
 }
 
 beforeEach(() => {
-	testRoot = join(tmpdir(), `strudel-presentation-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	testRoot = join(
+		tmpdir(),
+		`strudel-presentation-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+	);
 	mkdirSync(join(testRoot, "skills"), { recursive: true });
 	writeFileSync(
 		join(testRoot, "skills", "test-skill.md"),
@@ -89,10 +101,15 @@ describe("STRUDEL_CONFIG_PATH redirect", () => {
 });
 
 describe("presentTool", () => {
-	const defaults = { description: "default desc", promptSnippet: "default snippet" };
+	const defaults = {
+		description: "default desc",
+		promptSnippet: "default snippet",
+	};
 
 	it("returns defaults when there is no presentation config", () => {
-		expect(presentTool(undefined, "strudel_search", defaults)).toEqual(defaults);
+		expect(presentTool(undefined, "strudel_search", defaults)).toEqual(
+			defaults,
+		);
 	});
 
 	it("applies per-field overrides, keeping unset fields at default", () => {
@@ -111,7 +128,13 @@ describe("presentTool", () => {
 
 describe("inventory line helpers", () => {
 	it("defaultInventoryLine formats total + kind counts", () => {
-		const line = defaultInventoryLine(5, new Map([["skill", 3], ["rule", 2]]));
+		const line = defaultInventoryLine(
+			5,
+			new Map([
+				["skill", 3],
+				["rule", 2],
+			]),
+		);
 		expect(line).toBe(
 			"Pantry: 5 indexed capabilities (skill:3 rule:2). " +
 				"Your visible tools are a cache, not your inventory — strudel_search finds the rest.",
@@ -121,8 +144,12 @@ describe("inventory line helpers", () => {
 	it("resolveInventoryLine: absent → default, string → override, false → suppressed", () => {
 		expect(resolveInventoryLine(undefined, "DEFAULT")).toBe("DEFAULT");
 		expect(resolveInventoryLine({}, "DEFAULT")).toBe("DEFAULT");
-		expect(resolveInventoryLine({ inventoryLine: "CUSTOM" }, "DEFAULT")).toBe("CUSTOM");
-		expect(resolveInventoryLine({ inventoryLine: false }, "DEFAULT")).toBeUndefined();
+		expect(resolveInventoryLine({ inventoryLine: "CUSTOM" }, "DEFAULT")).toBe(
+			"CUSTOM",
+		);
+		expect(
+			resolveInventoryLine({ inventoryLine: false }, "DEFAULT"),
+		).toBeUndefined();
 	});
 });
 
@@ -131,7 +158,12 @@ describe("extension wiring (via STRUDEL_CONFIG_PATH)", () => {
 		writeConfig({
 			pantry: { roots: [testRoot] },
 			presentation: {
-				tools: { strudel_search: { description: "GENOME SEARCH DESC", promptSnippet: "GENOME SNIPPET" } },
+				tools: {
+					strudel_search: {
+						description: "GENOME SEARCH DESC",
+						promptSnippet: "GENOME SNIPPET",
+					},
+				},
 			},
 		});
 		const pi = createMockPi();
@@ -149,7 +181,9 @@ describe("extension wiring (via STRUDEL_CONFIG_PATH)", () => {
 		const pi = createMockPi();
 		await strudel(pi as any);
 		const handler = pi._handlers.get("before_agent_start")!;
-		const result = await handler({ systemPrompt: "You are an agent.\n\nAvailable tools:\n- read: read\n" });
+		const result = await handler({
+			systemPrompt: "You are an agent.\n\nAvailable tools:\n- read: read\n",
+		});
 		expect(result.systemPrompt).toContain(
 			"Pantry: 1 indexed capabilities (skill:1). " +
 				"Your visible tools are a cache, not your inventory — strudel_search finds the rest.",

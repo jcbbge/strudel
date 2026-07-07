@@ -13,8 +13,8 @@ import {
 	runFindabilityCheck,
 	syntheticIntents,
 } from "../src/findability.js";
-import { indexRoots, type Primitive } from "../src/pantry.js";
-import { initState, type StrudelConfig } from "../src/state.js";
+import { type Primitive, indexRoots } from "../src/pantry.js";
+import { type StrudelConfig, initState } from "../src/state.js";
 
 let testRoot: string;
 

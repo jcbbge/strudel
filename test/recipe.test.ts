@@ -9,14 +9,14 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-	loadRecipe,
-	expandParams,
-	referencedParams,
-	checkParams,
-	findRecipe,
-} from "../src/recipe.js";
 import { indexRoots } from "../src/pantry.js";
+import {
+	checkParams,
+	expandParams,
+	findRecipe,
+	loadRecipe,
+	referencedParams,
+} from "../src/recipe.js";
 
 let root: string;
 
@@ -126,7 +126,9 @@ description: no layers
 ---
 `,
 		);
-		await expect(loadRecipe(path)).rejects.toThrow(/'layers' must be a non-empty array/);
+		await expect(loadRecipe(path)).rejects.toThrow(
+			/'layers' must be a non-empty array/,
+		);
 	});
 });
 
@@ -138,9 +140,7 @@ describe("loadRecipe — JSON format", () => {
 				name: "json-recipe",
 				description: "in JSON",
 				params: ["x"],
-				layers: [
-					{ step: 1, ingredient: "tool.read", inputs: { path: "{x}" } },
-				],
+				layers: [{ step: 1, ingredient: "tool.read", inputs: { path: "{x}" } }],
 			}),
 		);
 		const r = await loadRecipe(path);
@@ -159,32 +159,36 @@ describe("loadRecipe — JSON format", () => {
 
 describe("expandParams", () => {
 	it("substitutes a single-token string with the raw value", () => {
-		const layers = [
-			{ step: 1, ingredient: "x", inputs: { path: "{path}" } },
-		];
+		const layers = [{ step: 1, ingredient: "x", inputs: { path: "{path}" } }];
 		const out = expandParams(layers, { path: "/tmp/a" });
 		expect(out[0].inputs.path).toBe("/tmp/a");
 	});
 
 	it("interpolates multiple tokens inline as string", () => {
 		const layers = [
-			{ step: 1, ingredient: "x", inputs: { msg: "hi {name}, path is {path}" } },
+			{
+				step: 1,
+				ingredient: "x",
+				inputs: { msg: "hi {name}, path is {path}" },
+			},
 		];
 		const out = expandParams(layers, { name: "Grok", path: "/tmp/x" });
 		expect(out[0].inputs.msg).toBe("hi Grok, path is /tmp/x");
 	});
 
 	it("preserves raw types when a whole string is a single token", () => {
-		const layers = [
-			{ step: 1, ingredient: "x", inputs: { n: "{count}" } },
-		];
+		const layers = [{ step: 1, ingredient: "x", inputs: { n: "{count}" } }];
 		const out = expandParams(layers, { count: 42 });
 		expect(out[0].inputs.n).toBe(42); // number, not "42"
 	});
 
 	it("recurses into nested arrays", () => {
 		const layers = [
-			{ step: 1, ingredient: "x", inputs: { paths: ["{a}", "literal", "{b}"] } },
+			{
+				step: 1,
+				ingredient: "x",
+				inputs: { paths: ["{a}", "literal", "{b}"] },
+			},
 		];
 		const out = expandParams(layers, { a: "/x", b: "/y" });
 		expect(out[0].inputs.paths).toEqual(["/x", "literal", "/y"]);
@@ -192,10 +196,21 @@ describe("expandParams", () => {
 
 	it("recurses into nested objects", () => {
 		const layers = [
-			{ step: 1, ingredient: "x", inputs: { outer: { inner: { path: "{p}" } } } },
+			{
+				step: 1,
+				ingredient: "x",
+				inputs: { outer: { inner: { path: "{p}" } } },
+			},
 		];
 		const out = expandParams(layers, { p: "/deep" });
-		expect(((out[0].inputs.outer as Record<string, unknown>).inner as Record<string, unknown>).path).toBe("/deep");
+		expect(
+			(
+				(out[0].inputs.outer as Record<string, unknown>).inner as Record<
+					string,
+					unknown
+				>
+			).path,
+		).toBe("/deep");
 	});
 
 	it("leaves unknown tokens intact", () => {
@@ -221,7 +236,11 @@ describe("referencedParams", () => {
 	it("finds params used across layers", () => {
 		const layers = [
 			{ step: 1, ingredient: "x", inputs: { a: "{alpha}" } },
-			{ step: 2, ingredient: "y", inputs: { b: ["{beta}", "{gamma}"], c: "$1.value" } },
+			{
+				step: 2,
+				ingredient: "y",
+				inputs: { b: ["{beta}", "{gamma}"], c: "$1.value" },
+			},
 		];
 		const refs = referencedParams(layers);
 		expect(refs).toEqual(new Set(["alpha", "beta", "gamma"]));
@@ -233,7 +252,11 @@ describe("checkParams", () => {
 		name: "r",
 		params: ["path", "content"],
 		layers: [
-			{ step: 1, ingredient: "w", inputs: { path: "{path}", body: "{content}" } },
+			{
+				step: 1,
+				ingredient: "w",
+				inputs: { path: "{path}", body: "{content}" },
+			},
 		],
 	};
 
