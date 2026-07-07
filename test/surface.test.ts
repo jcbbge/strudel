@@ -7,8 +7,10 @@ import {
 	GATEWAY_TOOL,
 	baselineTools,
 	computeActiveSurface,
+	evictOverCap,
 	pruneToolsSection,
 	stripSkillsBlock,
+	touchActivated,
 } from "../src/surface.js";
 
 describe("baselineTools", () => {
@@ -75,6 +77,43 @@ describe("computeActiveSurface", () => {
 		const active = computeActiveSurface(["read", "nonexistent"], [], available);
 		expect(active).toContain("read");
 		expect(active).not.toContain("nonexistent");
+	});
+});
+
+describe("LRU activation (touchActivated + evictOverCap)", () => {
+	it("a tool activated first but touched most recently survives eviction; the untouched middle tool is evicted", () => {
+		const activated = new Set(["first", "middle", "last"]);
+		// "first" was activated earliest, but is re-used (touched) most recently
+		touchActivated(activated, "first");
+		evictOverCap(activated, 2);
+		expect(activated.has("middle")).toBe(false); // least-recently-used
+		expect(activated.has("first")).toBe(true); // oldest insertion, freshest use
+		expect(activated.has("last")).toBe(true);
+	});
+
+	it("without a touch, eviction falls back to insertion order (oldest first)", () => {
+		const activated = new Set(["a", "b", "c"]);
+		evictOverCap(activated, 2);
+		expect([...activated]).toEqual(["b", "c"]);
+	});
+
+	it("touchActivated is a no-op for names that aren't activated", () => {
+		const activated = new Set(["a", "b"]);
+		touchActivated(activated, "nope");
+		expect([...activated]).toEqual(["a", "b"]);
+	});
+
+	it("evictOverCap evicts repeatedly until the set fits the cap", () => {
+		const activated = new Set(["a", "b", "c", "d", "e"]);
+		touchActivated(activated, "b");
+		evictOverCap(activated, 2);
+		expect([...activated]).toEqual(["e", "b"]);
+	});
+
+	it("evictOverCap leaves a set at/under the cap untouched", () => {
+		const activated = new Set(["a", "b"]);
+		evictOverCap(activated, 2);
+		expect([...activated]).toEqual(["a", "b"]);
 	});
 });
 

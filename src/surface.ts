@@ -43,6 +43,30 @@ export function computeActiveSurface(
 	return [...want].filter((n) => n === GATEWAY_TOOL || available.has(n));
 }
 
+/**
+ * Refresh recency for an activated tool. `activated` is a Set used as an LRU:
+ * insertion order = recency order, so touching = delete + re-add (moves the
+ * name to the back). No-op if the name isn't activated.
+ */
+export function touchActivated(activated: Set<string>, name: string): void {
+	if (!activated.has(name)) return;
+	activated.delete(name);
+	activated.add(name);
+}
+
+/**
+ * Evict least-recently-USED entries until the set fits under `max`. Assumes
+ * recency is maintained via touchActivated, so the front of the Set is the
+ * least recently used.
+ */
+export function evictOverCap(activated: Set<string>, max: number): void {
+	while (activated.size > max) {
+		const lru = activated.values().next().value;
+		if (lru === undefined) break;
+		activated.delete(lru);
+	}
+}
+
 const POINTER =
 	"Capability discovery: this prompt does not list every skill, tool, MCP, or command available. " +
 	"Call the `strudel_search` tool with your intent to find the right ones, then use them.";
