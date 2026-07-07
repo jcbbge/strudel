@@ -14,26 +14,28 @@
  * Config:       ~/.strudel/config.json
  */
 
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { EmbeddingConfig } from "./embeddings.js";
+import { loadConfig } from "./config.js";
 import { type Primitive, indexRoots, isOnDemand } from "./pantry.js";
+import {
+	defaultInventoryLine,
+	presentTool,
+	resolveInventoryLine,
+} from "./presentation.js";
 import { search } from "./search.js";
 import {
-	type SurfaceMode,
 	baselineTools,
 	computeActiveSurface,
+	evictOverCap,
 	pruneToolsSection,
 	stripSkillsBlock,
+	touchActivated,
 } from "./surface.js";
-import {
-	type StrudelConfig,
-	STRUDEL_VERSION,
-	initState,
-} from "./state.js";
+import { STRUDEL_VERSION, initState } from "./state.js";
+import { Telemetry, primitiveKey } from "./telemetry.js";
 import { bake, prep, listTools, type Recipe, type RecipeLayer } from "./oven.js";
 import {
 	loadRecipe,
@@ -49,30 +51,8 @@ import { registerPantryCommand } from "./commands/pantry.js";
 import { registerSurfaceCommand } from "./commands/surface.js";
 import { registerSearchCommand } from "./commands/search.js";
 
-const DEFAULT_ROOTS = ["~/.pi/agent", "~/.strudel"];
 const CACHE_PATH = join(homedir(), ".strudel", "cache", "embeddings.json");
 const MAX_ACTIVATED = 24; // bound the session surface so it can't slowly re-bloat
-
-async function loadConfig(): Promise<StrudelConfig> {
-	const cfgPath = join(homedir(), ".strudel", "config.json");
-	try {
-		const parsed = JSON.parse(await readFile(cfgPath, "utf-8")) as {
-			pantry?: { roots?: string[] };
-			embeddings?: EmbeddingConfig;
-			surface?: SurfaceMode;
-			baseline?: string[];
-		};
-		const roots = parsed.pantry?.roots;
-		return {
-			roots: Array.isArray(roots) && roots.length > 0 ? roots : DEFAULT_ROOTS,
-			embeddings: parsed.embeddings,
-			surface: parsed.surface === "strict" ? "strict" : "pragmatic",
-			baseline: parsed.baseline,
-		};
-	} catch {
-		return { roots: DEFAULT_ROOTS, surface: "pragmatic" };
-	}
-}
 
 /** The code-resident primitives Pi already has: tools + slash-commands. */
 export function runtimePrimitives(pi: ExtensionAPI): Primitive[] {
@@ -100,6 +80,19 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 
 	// Initialize shared state for commands
 	initState({ config, fileIndex, activated, baseline, pi });
+
+	// Telemetry bandit — event log + usage prior (kill switch: config.telemetry
+	// === false disables all writes and forces pure semantic ranking, λ=0).
+	const telemetry = new Telemetry({
+		logPath:
+			process.env.STRUDEL_TELEMETRY_PATH ??
+			join(homedir(), ".strudel", "telemetry.jsonl"),
+		enabled: config.telemetry !== false,
+	});
+	const sessionId = `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	// First-surface timestamps this session — links the invoke funnel
+	// (`surfaced` flag + latency_from_surface_ms).
+	const surfacedAt = new Map<string, number>();
 
 	const byKind = new Map<string, number>();
 	for (const p of fileIndex) byKind.set(p.kind, (byKind.get(p.kind) ?? 0) + 1);
@@ -137,10 +130,20 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			);
 		}
 
-		const systemPrompt = pruneToolsSection(
+		let systemPrompt = pruneToolsSection(
 			stripSkillsBlock(event.systemPrompt),
 			new Set(active),
 		);
+
+		// Announce the pantry inventory right after the pruned tools section so
+		// the model knows its visible tools are a cache, not the full catalog.
+		const inventory = resolveInventoryLine(
+			config.presentation,
+			defaultInventoryLine(fileIndex.length, byKind),
+		);
+		if (inventory) {
+			systemPrompt = `${systemPrompt.trimEnd()}\n\n${inventory}\n`;
+		}
 		return { systemPrompt };
 	});
 
@@ -148,11 +151,14 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	pi.registerTool({
 		name: "strudel_search",
 		label: "Search the Pantry",
-		description:
-			"Search agent primitives (skills, tools, MCP tools, commands, rules, ...) by intent " +
-			"across the Pantry. Returns the most relevant few rather than the whole catalog.",
-		promptSnippet:
-			"strudel_search: find primitives by intent across the Pantry.",
+		// Presentation genome: config.presentation.tools may override per-field.
+		...presentTool(config.presentation, "strudel_search", {
+			description:
+				"Search agent primitives (skills, tools, MCP tools, commands, rules, ...) by intent " +
+				"across the Pantry. Returns the most relevant few rather than the whole catalog.",
+			promptSnippet:
+				"strudel_search: find primitives by intent across the Pantry.",
+		}),
 		parameters: Type.Object({
 			query: Type.String({
 				description: "What you're trying to do, in plain language.",
@@ -166,26 +172,47 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			const { hits, mode } = await search(searchable, params.query, {
 				embeddings: config.embeddings,
 				cachePath: CACHE_PATH,
+				bandit: telemetry,
+			});
+
+			// Telemetry hook: log a surface event per returned hit (rank + score).
+			hits.forEach((h, i) => {
+				const key = primitiveKey(h);
+				telemetry.recordSurface({
+					session: sessionId,
+					query: params.query,
+					primitive: key,
+					rank: i + 1,
+					score: h.score,
+					explore: h.explore,
+				});
+				if (!surfacedAt.has(key)) surfacedAt.set(key, telemetry.nowMs());
 			});
 
 			// Curate-and-run: make surfaced code primitives callable THIS turn, bounded.
+			// The activated Set is an LRU: re-surfacing a tool refreshes its recency,
+			// so eviction removes the least-recently-USED, not the first-inserted.
 			let surfaceChanged = false;
 			for (const h of hits) {
-				if (h.source === "runtime:tool" && !activated.has(h.name)) {
-					activated.add(h.name);
-					surfaceChanged = true;
+				if (h.source === "runtime:tool") {
+					if (activated.has(h.name)) {
+						touchActivated(activated, h.name);
+					} else {
+						activated.add(h.name);
+						surfaceChanged = true;
+					}
 				}
 				// Agent definitions (both kinds) require the subagent tool to invoke
-				if ((h.kind === "agent" || h.kind === "subagent") && !activated.has("subagent")) {
-					activated.add("subagent");
-					surfaceChanged = true;
+				if (h.kind === "agent" || h.kind === "subagent") {
+					if (activated.has("subagent")) {
+						touchActivated(activated, "subagent");
+					} else {
+						activated.add("subagent");
+						surfaceChanged = true;
+					}
 				}
 			}
-			while (activated.size > MAX_ACTIVATED) {
-				const oldest = activated.values().next().value;
-				if (oldest === undefined) break;
-				activated.delete(oldest);
-			}
+			evictOverCap(activated, MAX_ACTIVATED);
 
 			// Immediately update the active surface so tools are callable THIS turn
 			if (surfaceChanged) {
@@ -224,14 +251,16 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	pi.registerTool({
 		name: "strudel_prep",
 		label: "Compose a Recipe",
-		description:
-			"Compose a recipe. The middle verb of the triad: search → prep → bake. " +
-			"Takes a goal + a sketch of layers (or a named recipe from the Pantry + params), " +
-			"returns a validated recipe with all tools resolved and $N.field bindings checked. " +
-			"Always call before bake on any multi-step work. On success the response includes " +
-			"a copy-pasteable strudel_bake invocation.",
-		promptSnippet:
-			"strudel_prep: compose a recipe (search → prep → bake). Returns a validated recipe + ready-to-paste bake call.",
+		...presentTool(config.presentation, "strudel_prep", {
+			description:
+				"Compose a recipe. The middle verb of the triad: search → prep → bake. " +
+				"Takes a goal + a sketch of layers (or a named recipe from the Pantry + params), " +
+				"returns a validated recipe with all tools resolved and $N.field bindings checked. " +
+				"Always call before bake on any multi-step work. On success the response includes " +
+				"a copy-pasteable strudel_bake invocation.",
+			promptSnippet:
+				"strudel_prep: compose a recipe (search → prep → bake). Returns a validated recipe + ready-to-paste bake call.",
+		}),
 		parameters: Type.Object({
 			goal: Type.String({ description: "What the recipe accomplishes" }),
 			layers: Type.Optional(Type.Array(
@@ -254,6 +283,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 		async execute(_toolCallId, params) {
 			let effectiveLayers: RecipeLayer[];
 			let recipeExpansionNote = "";
+			let recipePrimitiveKey: string | undefined;
 
 			// Named-recipe path: look up in the Pantry, substitute params, expand.
 			if (params.recipe) {
@@ -300,6 +330,18 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 					? ` (unused params ignored: ${check.extra.join(", ")})`
 					: "";
 				recipeExpansionNote = `Expanded from recipe \`${params.recipe}\`${extraNote}.\n`;
+
+				// Telemetry hook: the agent invoked this recipe via prep.
+				recipePrimitiveKey = primitiveKey(primitive);
+				const surfacedMs = surfacedAt.get(recipePrimitiveKey);
+				telemetry.recordInvoke({
+					session: sessionId,
+					primitive: recipePrimitiveKey,
+					via: "prep",
+					surfaced: surfacedMs !== undefined,
+					latencyFromSurfaceMs:
+						surfacedMs !== undefined ? telemetry.nowMs() - surfacedMs : null,
+				});
 			} else if (params.layers && params.layers.length > 0) {
 				effectiveLayers = params.layers as RecipeLayer[];
 			} else {
@@ -319,7 +361,11 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 
 			// Mark this recipe shape as prepped so a subsequent bake doesn't warn.
 			if (result.valid) {
-				preppedRecipes.add(recipeKey(params.goal, effectiveLayers));
+				const key = recipeKey(params.goal, effectiveLayers);
+				preppedRecipes.add(key);
+				// Remember which Pantry recipe produced these layers so bake can
+				// attribute its outcome to the recipe primitive too.
+				if (recipePrimitiveKey) preppedRecipeNames.set(key, recipePrimitiveKey);
 			}
 
 			let text = `Recipe: ${params.goal}\n`;
@@ -372,6 +418,7 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	// Keyed by a stable hash of (goal + layer ingredients) so identical recipes
 	// composed via prep are recognized by bake.
 	const preppedRecipes = new Set<string>();
+	const preppedRecipeNames = new Map<string, string>();
 	const recipeKey = (goal: string, layers: Array<{ step: number; ingredient: string }>): string =>
 		`${goal}§${layers.map((l) => `${l.step}:${l.ingredient}`).join("|")}`;
 
@@ -379,13 +426,15 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 	pi.registerTool({
 		name: "strudel_bake",
 		label: "Bake a Recipe",
-		description:
-			"Execute a recipe — the final verb of the triad: search → prep → bake. " +
-			"Runs the sequence of tool calls with $N.field bindings between steps. " +
-			"Tools are loaded from ~/.strudel/tools/. For multi-step recipes, call " +
-			"strudel_prep first to validate — bake will warn (not fail) when run unprepped.",
-		promptSnippet:
-			"strudel_bake: execute a recipe (final verb of search → prep → bake).",
+		...presentTool(config.presentation, "strudel_bake", {
+			description:
+				"Execute a recipe — the final verb of the triad: search → prep → bake. " +
+				"Runs the sequence of tool calls with $N.field bindings between steps. " +
+				"Tools are loaded from ~/.strudel/tools/. For multi-step recipes, call " +
+				"strudel_prep first to validate — bake will warn (not fail) when run unprepped.",
+			promptSnippet:
+				"strudel_bake: execute a recipe (final verb of search → prep → bake).",
+		}),
 		parameters: Type.Object({
 			goal: Type.String({ description: "What the recipe accomplishes" }),
 			layers: Type.Array(
@@ -412,10 +461,49 @@ export default async function strudel(pi: ExtensionAPI): Promise<void> {
 			const isMultiStep = params.layers.length > 1;
 			const showPrepWarning = isMultiStep && !wasPrepped;
 
+			// Telemetry hook: invoke events for the baked primitives — each distinct
+			// ingredient tool, plus the Pantry recipe these layers were prepped from.
+			const bakedPrimitives = new Set<string>(
+				params.layers.map((l) => `tool:${l.ingredient}`),
+			);
+			const preppedFrom = preppedRecipeNames.get(key);
+			if (preppedFrom) bakedPrimitives.add(preppedFrom);
+			for (const p of bakedPrimitives) {
+				const surfacedMs = surfacedAt.get(p);
+				telemetry.recordInvoke({
+					session: sessionId,
+					primitive: p,
+					via: "bake",
+					surfaced: surfacedMs !== undefined,
+					latencyFromSurfaceMs:
+						surfacedMs !== undefined ? telemetry.nowMs() - surfacedMs : null,
+				});
+			}
+
 			const result = await bake(recipe);
+
+			// Telemetry hook: terminal outcome of the bake.
+			const failedStep = result.steps.find((s) => s.error)?.step;
+			const outcomeError = result.success
+				? null
+				: failedStep !== undefined
+					? `step_failed:${failedStep}`
+					: "bake_failed";
+			const stepsRun = result.steps.filter((s) => !s.error).length;
+			for (const p of bakedPrimitives) {
+				telemetry.recordOutcome({
+					session: sessionId,
+					primitive: p,
+					ok: result.success,
+					error: outcomeError,
+					stepsRun,
+					stepsTotal: params.layers.length,
+				});
+			}
 
 			// After a successful bake we no longer need the prep flag for this recipe.
 			preppedRecipes.delete(key);
+			preppedRecipeNames.delete(key);
 
 			let text = `Recipe: ${params.goal}\n`;
 			text += `Status: ${result.success ? "✓ Success" : "✗ Failed"}\n`;
