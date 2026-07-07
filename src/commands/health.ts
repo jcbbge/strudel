@@ -8,8 +8,10 @@ import { access, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { formatFindability, runFindabilityCheck } from "../findability.js";
 import { expandHome } from "../pantry.js";
-import { getState, STRUDEL_VERSION } from "../state.js";
+import { search } from "../search.js";
+import { STRUDEL_VERSION, getState } from "../state.js";
 
 export function registerHealthCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("strudel-health", {
@@ -57,10 +59,9 @@ export function registerHealthCommand(pi: ExtensionAPI): void {
 				try {
 					const controller = new AbortController();
 					const timeout = setTimeout(() => controller.abort(), 5000);
-					const response = await fetch(
-						`${config.embeddings.baseUrl}/models`,
-						{ signal: controller.signal },
-					);
+					const response = await fetch(`${config.embeddings.baseUrl}/models`, {
+						signal: controller.signal,
+					});
 					clearTimeout(timeout);
 					if (response.ok) {
 						embeddingsOk = true;
@@ -95,6 +96,21 @@ export function registerHealthCommand(pi: ExtensionAPI): void {
 				cacheStatus = `  ${cachePath} (not yet created)`;
 			}
 
+			// Findability self-test — replay every primitive's intents against
+			// search. Runs lexical when embeddings are absent/unreachable, so it
+			// works on any install. Bounded at 300 searches by the check itself.
+			const findabilityReport = await runFindabilityCheck(
+				fileIndex,
+				async (query) => {
+					const { hits } = await search(fileIndex, query, {
+						embeddings: embeddingsOk ? config.embeddings : undefined,
+						cachePath,
+					});
+					return hits;
+				},
+			);
+			const findabilitySection = formatFindability(findabilityReport);
+
 			// Overall status
 			let overall: string;
 			if (issues.length === 0) {
@@ -120,6 +136,8 @@ ${embeddingsStatus}
 
 Cache:
 ${cacheStatus}
+
+${findabilitySection}
 
 Overall: ${overall}${issues.length > 0 ? `\n  - ${issues.join("\n  - ")}` : ""}`;
 

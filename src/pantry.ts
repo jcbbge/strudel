@@ -19,6 +19,8 @@ export interface Primitive {
 	description: string;
 	/** Absolute file path, or "runtime:<api>" for registry-sourced primitives. */
 	source: string;
+	/** Authored findability intents from frontmatter — what an agent would say when it needs this. */
+	intents?: string[];
 }
 
 /** Subdirectory name → primitive kind. Kind is read off the directory structure. */
@@ -147,12 +149,14 @@ async function readPrimitive(
 	}
 
 	const meta = await describeFile(file);
-	return {
+	const prim: Primitive = {
 		name: meta.name ?? name,
 		kind,
 		description: meta.description ?? "",
 		source: file,
 	};
+	if (meta.intents?.length) prim.intents = meta.intents;
+	return prim;
 }
 
 /** Pick the entry file inside a primitive directory: a manifest, a doc, or code. */
@@ -174,7 +178,7 @@ function pickDirEntry(files: string[]): string | undefined {
 /** Best-effort {name, description} from a file: manifest, frontmatter, or comment. */
 async function describeFile(
 	file: string,
-): Promise<{ name?: string; description?: string }> {
+): Promise<{ name?: string; description?: string; intents?: string[] }> {
 	let raw = "";
 	try {
 		raw = await readFile(file, "utf-8");
@@ -196,7 +200,11 @@ async function describeFile(
 
 	if (TEXT_EXT.has(extname(file).toLowerCase())) {
 		const { fm, body } = splitFrontmatter(raw);
-		return { name: fm.name, description: fm.description ?? firstProse(body) };
+		return {
+			name: fm.name,
+			description: fm.description ?? firstProse(body),
+			intents: fm.intents,
+		};
 	}
 
 	// Code file — take the first JSDoc / line-comment as the description.
@@ -222,6 +230,7 @@ function firstCommentDescription(raw: string): string | undefined {
 interface Frontmatter {
 	name?: string;
 	description?: string;
+	intents?: string[];
 }
 
 /**
@@ -238,9 +247,44 @@ function splitFrontmatter(raw: string): { fm: Frontmatter; body: string } {
 		return r ? r[1].trim().replace(/^["']|["']$/g, "") : undefined;
 	};
 	return {
-		fm: { name: get("name"), description: get("description") },
+		fm: {
+			name: get("name"),
+			description: get("description"),
+			intents: getIntents(block),
+		},
 		body: raw.slice(m[0].length),
 	};
+}
+
+/**
+ * Parse an optional `intents:` field from a frontmatter block. Accepts either
+ * an inline comma-separated value (`intents: a, b`) or a YAML list:
+ *
+ *     intents:
+ *       - a
+ *       - b
+ */
+function getIntents(block: string): string[] | undefined {
+	const lines = block.split("\n");
+	const i = lines.findIndex((l) => /^intents\s*:/i.test(l));
+	if (i === -1) return undefined;
+
+	const inline = lines[i].replace(/^intents\s*:/i, "").trim();
+	const out: string[] = [];
+	if (inline) {
+		for (const part of inline.split(",")) {
+			const t = part.trim().replace(/^["']|["']$/g, "");
+			if (t) out.push(t);
+		}
+	} else {
+		for (const line of lines.slice(i + 1)) {
+			const m = line.match(/^\s+-\s+(.+)$/);
+			if (!m) break; // end of the YAML list
+			const t = m[1].trim().replace(/^["']|["']$/g, "");
+			if (t) out.push(t);
+		}
+	}
+	return out.length > 0 ? out : undefined;
 }
 
 /** First non-heading, non-fence prose line of a body — the description fallback. */
