@@ -10,9 +10,15 @@ import {
 	semanticSearch,
 } from "./embeddings.js";
 import { type Primitive, type Ranked, lexicalSearch } from "./pantry.js";
+import type { BanditRanked } from "./telemetry.js";
+
+/** Reranks a semantically-ordered result set with the telemetry prior. */
+export interface BanditRanker {
+	rerank(hits: Ranked[], rng?: () => number): BanditRanked[];
+}
 
 export interface SearchResult {
-	hits: Ranked[];
+	hits: BanditRanked[];
 	mode: "semantic" | "lexical";
 }
 
@@ -20,11 +26,17 @@ export interface SearchOptions {
 	embeddings?: EmbeddingConfig;
 	cachePath: string;
 	limit?: number;
+	/** Telemetry bandit — blends the usage prior into the ranking when set. */
+	bandit?: BanditRanker;
+	/** Injectable RNG for the bandit's exploration slot (tests). */
+	rng?: () => number;
 }
 
 /**
  * Rank `items` against `query`. Semantic when embeddings are configured — falling
- * back to lexical if the endpoint errors — lexical otherwise.
+ * back to lexical if the endpoint errors — lexical otherwise. When a bandit is
+ * provided, the telemetry prior is blended into the final ordering
+ * (`final = (1-λ)·sem + λ·prior`); with an empty log this is a no-op.
  */
 export async function search(
 	items: Primitive[],
@@ -32,6 +44,7 @@ export async function search(
 	opts: SearchOptions,
 ): Promise<SearchResult> {
 	const limit = opts.limit ?? 8;
+	let result: SearchResult | undefined;
 	if (opts.embeddings) {
 		try {
 			const hits = await semanticSearch(
@@ -41,7 +54,7 @@ export async function search(
 				opts.cachePath,
 				limit,
 			);
-			return { hits, mode: "semantic" };
+			result = { hits, mode: "semantic" };
 		} catch (err) {
 			// Endpoint down / error — degrade to lexical, never break search.
 			console.error(
@@ -49,5 +62,11 @@ export async function search(
 			);
 		}
 	}
-	return { hits: lexicalSearch(items, query, limit), mode: "lexical" };
+	if (!result) {
+		result = { hits: lexicalSearch(items, query, limit), mode: "lexical" };
+	}
+	if (opts.bandit) {
+		result.hits = opts.bandit.rerank(result.hits, opts.rng);
+	}
+	return result;
 }
