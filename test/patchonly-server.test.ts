@@ -17,7 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PatchApplier } from "../src/patchonly/applier.js";
-import { setEventsDir } from "../src/patchonly/log.js";
+import { eventsPath, setEventsDir } from "../src/patchonly/log.js";
+import { loadEvents } from "../src/patchonly/metrics.js";
 import patchOnly from "../src/patchonly/pi-extension.js";
 import { serve, submitIntent } from "../src/patchonly/server.js";
 
@@ -156,6 +157,14 @@ describe("pi restriction shim — the manifest for harness #1", () => {
 		});
 		expect(hook({ toolName: "write" })).toMatchObject({ block: true });
 		expect(hook({ toolName: "read" })).toBeUndefined(); // reads stay free
+		// The wall leaves a trace — friction must be visible (ablation lens).
+		const events = loadEvents(eventsPath());
+		const blocked = events.filter((e) => e.type === "blocked_attempt");
+		expect(blocked.map((e) => (e as { tool_name: string }).tool_name).sort()).toEqual([
+			"edit",
+			"write",
+		]);
+		expect(blocked.every((e) => (e as { agent_id: string }).agent_id.length > 0)).toBe(true);
 	});
 
 	it("execute() drives the real applier over the real socket — full loop", async () => {

@@ -18,12 +18,25 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { validateIntent } from "./schema.js";
 import { submitIntent } from "./server.js";
+import { appendEvent } from "./log.js";
 
 export const DEFAULT_BLOCKED_TOOLS = ["edit", "write"];
 
 export interface PatchOnlyOptions {
 	socketPath?: string;
 	blockedTools?: string[];
+}
+
+/**
+ * Agent identity resolution order: explicit override → herdr pane identity
+ * ($HERDR_WORKSPACE_ID/$HERDR_PANE_ID are injected into every managed pane)
+ * → process fallback. The environment names the agent; we never invent one.
+ */
+export function resolveAgentId(explicit?: string): string {
+	if (explicit) return explicit;
+	const { HERDR_WORKSPACE_ID, HERDR_PANE_ID } = process.env;
+	if (HERDR_WORKSPACE_ID && HERDR_PANE_ID) return `herdr:${HERDR_WORKSPACE_ID}:${HERDR_PANE_ID}`;
+	return `pi-${process.pid}`;
 }
 
 export function defaultSocketPath(): string {
@@ -48,6 +61,14 @@ export default function patchOnly(
 	// the redirect instruction the model re-reasons against.
 	pi.on("tool_call", (event) => {
 		if (blocked.includes(event.toolName)) {
+			// The wall must leave a trace: repeated attempts are the sharpest
+			// friction signal the system produces (ablation lens, Class B).
+			appendEvent({
+				type: "blocked_attempt",
+				ts: Date.now(),
+				tool_name: event.toolName,
+				agent_id: resolveAgentId(),
+			});
 			return {
 				block: true,
 				reason:
@@ -129,7 +150,7 @@ export default function patchOnly(
 		async execute(_toolCallId, params) {
 			const intent = {
 				intent_id: params.intent_id,
-				agent_id: process.env.PATCHONLY_AGENT_ID ?? `pi-${process.pid}`,
+				agent_id: resolveAgentId(),
 				base_commit: params.base_commit,
 				branch: params.branch,
 				edits: params.edits,

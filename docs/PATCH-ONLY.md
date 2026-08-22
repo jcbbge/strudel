@@ -132,6 +132,32 @@ Bugs found and fixed during proving (recorded because they validate the experime
 - Worktree-vs-patch-only resource comparison under real task mixes. [UNKNOWN — condition A baseline runs not yet executed]
 - Codex/Claude/Cursor restriction manifests. [UNKNOWN — gated on positive v1 results]
 
+### The operator's review moment (OPEN DECISION — jrg)
+
+The architecture coordinates agents; it does not yet define where the human
+stands. Three candidate postures, not mutually exclusive:
+
+1. **Branch-tip queue** — the applier commits to `patch/*` branches; the
+   operator reviews branch tips asynchronously (PR flow, unchanged habits).
+   Weakest gate, most autonomy.
+2. **Approval gate per intent** — intents touching allowlisted sensitive paths
+   (`package.json`, auth, migrations) park in a `pending` state until an
+   operator acks. Strongest gate, highest interruption cost.
+3. **Post-hoc audit only** — no gate; the event log is the audit trail, read
+   via metrics after the fact.
+
+[UNKNOWN: which posture the operator wants — not inferable from the spec.]
+
+### Translation mode (design consequence of the artifact-ownership thesis)
+
+Owning the intent, not the tool layer: a shim may *translate* native tool
+calls (Edit → search_replace intent) and return the applier's verdict as the
+tool result, leaving the agent's cognitive loop untouched. Strictly better DX
+than blocking, same mutation discipline underneath. Constraints named:
+shell-based mutations bypass capture; per-call translation forfeits
+multi-file atomicity unless batched per turn. Not yet implemented — gated on
+live-run data showing blocking costs productivity.
+
 ### Running the experiment
 
 ```sh

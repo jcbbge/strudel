@@ -3,8 +3,9 @@
  * No filesystem, no git — conflicts must be data even here.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { applyEdits, parseUnifiedDiff } from "../src/patchonly/apply.js";
+import { resolveAgentId } from "../src/patchonly/pi-extension.js";
 import { validateIntent } from "../src/patchonly/schema.js";
 
 const FILE = "src/hello.ts";
@@ -210,3 +211,29 @@ describe("applyEdits — full_file + transactionality", () => {
 		if (!r.ok) expect(r.detail).toMatch(/file not found/);
 	});
 });
+
+describe("resolveAgentId", () => {
+	const OLD_ENV = { ...process.env };
+	afterEach(() => {
+		process.env = { ...OLD_ENV };
+	});
+
+	it("prefers the explicit override", () => {
+		process.env.HERDR_WORKSPACE_ID = "w1A";
+		process.env.HERDR_PANE_ID = "p12";
+		expect(resolveAgentId("named-agent")).toBe("named-agent");
+	});
+
+	it("derives herdr pane identity when the environment provides it", () => {
+		process.env.HERDR_WORKSPACE_ID = "w1A";
+		process.env.HERDR_PANE_ID = "p12";
+		expect(resolveAgentId()).toBe("herdr:w1A:p12");
+	});
+
+	it("falls back to a process id when no environment names it", () => {
+		delete process.env.HERDR_WORKSPACE_ID;
+		delete process.env.HERDR_PANE_ID;
+		expect(resolveAgentId()).toMatch(/^pi-\d+$/);
+	});
+});
+

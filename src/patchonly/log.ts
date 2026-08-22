@@ -42,10 +42,19 @@ export interface IntentRejectedEvent {
 	isolation_cost: { files_copied: 0; bytes_copied: 0 };
 }
 
+/** A harness shim refused a direct-mutation tool call. Friction signal — must leave a trace (ablation lens). */
+export interface BlockedAttemptEvent {
+	type: "blocked_attempt";
+	ts: number;
+	tool_name: string;
+	agent_id: string;
+}
+
 export type PatchEvent =
 	| IntentReceivedEvent
 	| IntentAppliedEvent
-	| IntentRejectedEvent;
+	| IntentRejectedEvent
+	| BlockedAttemptEvent;
 
 let eventsDir = join(homedir(), ".patchonly");
 
