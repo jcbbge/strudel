@@ -160,11 +160,12 @@ describe("pi restriction shim — the manifest for harness #1", () => {
 		// The wall leaves a trace — friction must be visible (ablation lens).
 		const events = loadEvents(eventsPath());
 		const blocked = events.filter((e) => e.type === "blocked_attempt");
-		expect(blocked.map((e) => (e as { tool_name: string }).tool_name).sort()).toEqual([
-			"edit",
-			"write",
-		]);
-		expect(blocked.every((e) => (e as { agent_id: string }).agent_id.length > 0)).toBe(true);
+		expect(
+			blocked.map((e) => (e as { tool_name: string }).tool_name).sort(),
+		).toEqual(["edit", "write"]);
+		expect(
+			blocked.every((e) => (e as { agent_id: string }).agent_id.length > 0),
+		).toBe(true);
 	});
 
 	it("execute() drives the real applier over the real socket — full loop", async () => {

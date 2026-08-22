@@ -236,4 +236,3 @@ describe("resolveAgentId", () => {
 		expect(resolveAgentId()).toMatch(/^pi-\d+$/);
 	});
 });
-

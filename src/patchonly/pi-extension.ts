@@ -16,9 +16,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { appendEvent } from "./log.js";
 import { validateIntent } from "./schema.js";
 import { submitIntent } from "./server.js";
-import { appendEvent } from "./log.js";
 
 export const DEFAULT_BLOCKED_TOOLS = ["edit", "write"];
 
@@ -35,7 +35,8 @@ export interface PatchOnlyOptions {
 export function resolveAgentId(explicit?: string): string {
 	if (explicit) return explicit;
 	const { HERDR_WORKSPACE_ID, HERDR_PANE_ID } = process.env;
-	if (HERDR_WORKSPACE_ID && HERDR_PANE_ID) return `herdr:${HERDR_WORKSPACE_ID}:${HERDR_PANE_ID}`;
+	if (HERDR_WORKSPACE_ID && HERDR_PANE_ID)
+		return `herdr:${HERDR_WORKSPACE_ID}:${HERDR_PANE_ID}`;
 	return `pi-${process.pid}`;
 }
 
