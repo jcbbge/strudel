@@ -21,9 +21,13 @@
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "strudel-applier": "./bin/strudel-applier.mjs"
+  },
   "files": [
     "dist",
     "src",
+    "bin",
     "README.md",
     "ARCHITECTURE.md",
     "LICENSE"
