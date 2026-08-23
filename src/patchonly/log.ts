@@ -50,11 +50,21 @@ export interface BlockedAttemptEvent {
 	agent_id: string;
 }
 
+/** A freshness probe found the agent's view stale — staleness-rate metric, logged only on failure. */
+export interface StaleDetectedEvent {
+	type: "stale_detected";
+	ts: number;
+	agent_id: string;
+	base_commit: string;
+	head: string;
+}
+
 export type PatchEvent =
 	| IntentReceivedEvent
 	| IntentAppliedEvent
 	| IntentRejectedEvent
-	| BlockedAttemptEvent;
+	| BlockedAttemptEvent
+	| StaleDetectedEvent;
 
 let eventsDir = join(homedir(), ".patchonly");
 

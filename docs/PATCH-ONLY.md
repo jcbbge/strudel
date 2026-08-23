@@ -70,6 +70,7 @@ agent pane (pi)                      applier (this repo)
     "content": "..."    // full_file
   }],
   "test_commands": ["optional; default = project config"],
+  "partition":    ["optional path scope; edits outside it are rejected as partition_violation — mechanical enforcement of brief partitions"],
   "rationale":    "one line, lands in the commit message"
 }
 ```
@@ -85,7 +86,12 @@ agent pane (pi)                      applier (this repo)
 
 ### Structured rejection shape
 
-`{ ok:false, kind:"conflict"|"test_failure"|"stale_base"|"busy"|"invalid", detail, edit_index?, command_output? }`
+`{ ok:false, kind:"conflict"|"test_failure"|"stale_base"|"busy"|"invalid"|"dirty_tree"|"partition_violation"|"no_change", detail, edit_index?, command_output? }`
+
+Read-side instrument: `freshness` op (and pi tool `check_tree_freshness`) —
+one socket call answers "is my base_commit still HEAD?" before an agent
+burns a reasoning pass. Successes are never logged; staleness detections are
+(`stale_detected` events → staleness-rate metric).
 
 ### Isolation economics (the worktree comparison)
 

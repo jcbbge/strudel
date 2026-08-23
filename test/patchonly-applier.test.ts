@@ -233,6 +233,97 @@ describe("PatchApplier — rejections as data (C4)", () => {
 	}, 10_000);
 });
 
+describe("PatchApplier — partition enforcement (#3)", () => {
+	it("accepts an intent whose edits all sit inside the declared partition", async () => {
+		const r = await applier.applyIntent(intent({ partition: ["hello.txt"] }));
+		expect(r).toMatchObject({ ok: true });
+	});
+
+	it("matches directory prefixes with or without trailing slash", async () => {
+		writeFileSync(join(repo, "nested.txt"), "deep\n");
+		execFileSync("git", ["add", "."], { cwd: repo });
+		execFileSync("git", ["commit", "-q", "-m", "nested"], { cwd: repo });
+		let n = 0;
+		for (const partition of [["src/"], ["src"]]) {
+			n++;
+			const r = await applier.applyIntent(
+				intent({
+					partition,
+					base_commit: head(),
+					edits: [
+						{ file: "src/deep.ts", type: "full_file", content: `x-${n}\n` },
+					],
+				}),
+			);
+			expect(r, `partition ${JSON.stringify(partition)}`).toMatchObject({
+				ok: true,
+			});
+		}
+	});
+
+	it("rejects edits outside the partition with a violation naming the offender", async () => {
+		const r = await applier.applyIntent(
+			intent({
+				partition: ["src/patchonly/**"],
+				edits: [
+					{
+						file: "hello.txt",
+						type: "search_replace",
+						search: "world",
+						replace: "x",
+					},
+				],
+			}),
+		);
+		expect(r).toMatchObject({ ok: false, kind: "partition_violation" });
+		if (!r.ok) expect(r.detail).toContain("hello.txt");
+		expect(statusClean()).toBe(true);
+	});
+
+	it("rejects when ANY edit escapes, even if others comply", async () => {
+		const r = await applier.applyIntent(
+			intent({
+				partition: ["hello.txt"],
+				edits: [
+					{
+						file: "hello.txt",
+						type: "search_replace",
+						search: "world",
+						replace: "x",
+					},
+					{ file: "other.txt", type: "full_file", content: "escape\n" },
+				],
+			}),
+		);
+		expect(r).toMatchObject({ ok: false, kind: "partition_violation" });
+		if (!r.ok) expect(r.detail).toContain("other.txt");
+		expect(statusClean()).toBe(true);
+	});
+});
+
+describe("PatchApplier — no-op intents", () => {
+	it("reports no_change instead of a fake conflict when the proposal deltas nothing", async () => {
+		// First intent establishes content.
+		expect(await applier.applyIntent(intent())).toMatchObject({ ok: true });
+		// Second intent proposes the identical result.
+		const r = await applier.applyIntent(
+			intent({
+				intent_id: "i-noop",
+				edits: [
+					{
+						file: "hello.txt",
+						type: "full_file",
+						content: "hello patchonly\n",
+					},
+				],
+			}),
+		);
+		expect(r).toMatchObject({ ok: false, kind: "no_change" });
+		if (!r.ok) expect(r.detail).toMatch(/zero delta/);
+		expect(statusClean()).toBe(true);
+	});
+});
+
 describe("PatchApplier — event log + isolation economics (C3)", () => {
 	it("writes received/applied events with zero-copy isolation cost", async () => {
 		await applier.applyIntent(intent());

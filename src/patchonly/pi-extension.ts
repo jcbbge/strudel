@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { appendEvent } from "./log.js";
 import { validateIntent } from "./schema.js";
-import { submitIntent } from "./server.js";
+import { request, submitIntent } from "./server.js";
 
 export const DEFAULT_BLOCKED_TOOLS = ["edit", "write"];
 
@@ -144,6 +144,12 @@ export default function patchOnly(
 					description: "Commands the applier runs before committing.",
 				}),
 			),
+			partition: Type.Optional(
+				Type.Array(Type.String(), {
+					description:
+						"Path scope you promise to touch (repo-relative files or directory prefixes). Edits outside it are rejected mechanically — declare your brief's partition here.",
+				}),
+			),
 			rationale: Type.Optional(
 				Type.String({ description: "One line; lands in the commit message." }),
 			),
@@ -156,6 +162,7 @@ export default function patchOnly(
 				branch: params.branch,
 				edits: params.edits,
 				test_commands: params.test_commands,
+				partition: params.partition,
 				rationale: params.rationale,
 			};
 			const invalid = validateIntent(intent);
@@ -174,6 +181,48 @@ export default function patchOnly(
 					content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
 					isError: !outcome.ok,
 					details: outcome,
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Applier unreachable at ${socketPath}: ${(e as Error).message}`,
+						},
+					],
+					isError: true,
+					details: undefined,
+				};
+			}
+		},
+	});
+
+	// The read-side instrument (freshness lens): one socket call answers "is my
+	// view current?" instead of one wasted reasoning pass. Logs only staleness.
+	pi.registerTool({
+		name: "check_tree_freshness",
+		label: "Check Tree Freshness",
+		description:
+			"Read-only probe: is the canonical tree still at the commit you reasoned against? " +
+			"Call before composing an intent if your context might be stale; a fresh result costs " +
+			"a socket call, a stale one saves a full rejected-intent cycle.",
+		promptSnippet:
+			"check_tree_freshness: cheap pre-flight — verify base_commit is still HEAD before proposing.",
+		parameters: Type.Object({
+			base_commit: Type.String({
+				description: "The sha you reasoned against.",
+			}),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const response = await request(socketPath, {
+					op: "freshness",
+					base_commit: params.base_commit,
+					agent_id: resolveAgentId(),
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(response) }],
+					details: undefined,
 				};
 			} catch (e) {
 				return {
