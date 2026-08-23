@@ -6,6 +6,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -20,7 +21,7 @@ import { PatchApplier } from "../src/patchonly/applier.js";
 import { eventsPath, setEventsDir } from "../src/patchonly/log.js";
 import { loadEvents } from "../src/patchonly/metrics.js";
 import patchOnly from "../src/patchonly/pi-extension.js";
-import { serve, submitIntent } from "../src/patchonly/server.js";
+import { request, serve, submitIntent } from "../src/patchonly/server.js";
 
 let root: string;
 let repo: string;
@@ -133,14 +134,58 @@ function mockPi() {
 	};
 }
 
+describe("freshness probe (#1)", () => {
+	it("reports fresh when base_commit is HEAD, without logging anything", async () => {
+		await startServer();
+		const r = await request(socketPath, {
+			op: "freshness",
+			base_commit: head(),
+			agent_id: "probe-1",
+		});
+		expect(r).toMatchObject({ ok: true, fresh: true });
+		const events = existsSync(eventsPath()) ? loadEvents(eventsPath()) : [];
+		expect(events).toHaveLength(0); // successes never flood the log
+	});
+
+	it("reports stale against an old commit AND logs the detection", async () => {
+		await startServer();
+		const old = execFileSync("git", ["rev-parse", "HEAD~0"], { cwd: repo })
+			.toString()
+			.trim();
+		writeFileSync(join(repo, "app.ts"), "const version = 9;\n");
+		execFileSync("git", ["add", "."], { cwd: repo });
+		execFileSync("git", ["commit", "-q", "-m", "moved on"], { cwd: repo });
+		const r = await request(socketPath, {
+			op: "freshness",
+			base_commit: old,
+			agent_id: "probe-2",
+		});
+		expect(r).toMatchObject({ ok: true, fresh: false });
+		const events = loadEvents(eventsPath());
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({
+			type: "stale_detected",
+			agent_id: "probe-2",
+		});
+	});
+
+	it("rejects a probe with no base_commit", async () => {
+		await startServer();
+		const r = await request(socketPath, { op: "freshness" });
+		expect(r).toMatchObject({ ok: false, kind: "invalid" });
+	});
+});
+
 describe("pi restriction shim — the manifest for harness #1", () => {
 	it("removes mutating tools from the active surface and registers exactly one door", async () => {
 		await startServer();
 		const m = mockPi();
 		patchOnly(m.api as never, { socketPath });
 		expect(m.activeTools).toEqual(["read", "grep", "find", "ls"]);
-		expect(m.api.registerTool).toHaveBeenCalledTimes(1);
-		expect(m.tools[0].name).toBe("submit_edit_intent");
+		// Exactly one MUTATION door; the freshness probe is read-only.
+		expect(m.api.registerTool).toHaveBeenCalledTimes(2);
+		const names = m.tools.map((t) => t.name).sort();
+		expect(names).toEqual(["check_tree_freshness", "submit_edit_intent"]);
 	});
 
 	it("blocks edit/write at the tool_call hook with a redirect reason", async () => {

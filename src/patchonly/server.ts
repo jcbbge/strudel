@@ -13,13 +13,16 @@ import { unlinkSync } from "node:fs";
 import type { Server, Socket } from "node:net";
 import { createServer, connect as netConnect } from "node:net";
 import type { PatchApplier } from "./applier.js";
-import { eventsPath } from "./log.js";
+import { appendEvent, eventsPath, now } from "./log.js";
 import { type PatchMetrics, loadEvents, summarize } from "./metrics.js";
 import type { ApplyOutcome } from "./schema.js";
 
 export interface PatchRequest {
-	op: "submit" | "status" | "metrics";
+	op: "submit" | "status" | "metrics" | "freshness";
 	intent?: unknown;
+	/** freshness op: the sha the caller reasoned against. */
+	base_commit?: string;
+	agent_id?: string;
 }
 
 export function serve(
@@ -73,6 +76,29 @@ async function handleLine(
 			return applier.applyIntent(req.intent);
 		case "status":
 			return { ok: true, ...(await applier.status()) };
+		case "freshness": {
+			// Read-only cache-coherence probe: one socket call instead of one
+			// wasted reasoning pass. No lock, no intent, no event unless stale.
+			const base = typeof req.base_commit === "string" ? req.base_commit : "";
+			if (base.length === 0)
+				return {
+					ok: false,
+					kind: "invalid",
+					detail: "freshness requires base_commit",
+				};
+			const state = await applier.status();
+			const fresh = state.head?.startsWith(base) === true;
+			if (!fresh) {
+				appendEvent({
+					type: "stale_detected",
+					ts: now(),
+					agent_id: req.agent_id ?? "unknown",
+					base_commit: base,
+					head: state.head ?? "none",
+				});
+			}
+			return { ok: true, fresh, head: state.head, branch: state.branch };
+		}
 		case "metrics": {
 			const metrics: PatchMetrics = summarize(loadEvents(eventsPath()));
 			return { ok: true, metrics };

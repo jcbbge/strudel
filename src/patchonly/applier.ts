@@ -24,7 +24,7 @@ import {
 	writeFileSync,
 	writeSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { applyEdits } from "./apply.js";
 import { appendEvent, now } from "./log.js";
@@ -241,6 +241,32 @@ export class PatchApplier {
 			);
 		}
 
+		// Partition guard: briefs say "touch only your partition"; here that is
+		// enforced by a program instead of noticed by a coordinator. Matching
+		// rule (v1, dead simple): an entry matches the file exactly, or matches
+		// it as a directory prefix when the entry ends with "/".
+		if (intent.partition !== undefined) {
+			const partition: readonly string[] = intent.partition;
+			const inPartition = (file: string): boolean =>
+				partition.some((entry) => {
+					const prefix = entry.endsWith("/") ? entry : `${entry}/`;
+					return file === entry || file.startsWith(prefix);
+				});
+			const violator = intent.edits.find((e) => !inPartition(e.file));
+			if (violator !== undefined) {
+				return this.reject(
+					intent,
+					{
+						ok: false,
+						kind: "partition_violation",
+						detail: `edit touches ${violator.file}, outside the declared partition [${intent.partition.join(", ")}]`,
+					},
+					t0,
+					lockWaitMs,
+				);
+			}
+		}
+
 		// Stale-base guard: the agent reasons against a snapshot; if the tree
 		// moved since, the intent is re-reasoned, never merged.
 		const head = await this.head();
@@ -308,7 +334,9 @@ export class PatchApplier {
 		// Write + stage.
 		try {
 			for (const [file, content] of applied.files) {
-				writeFileSync(join(this.repo, file), content, "utf-8");
+				const abs = join(this.repo, file);
+				mkdirSync(dirname(abs), { recursive: true });
+				writeFileSync(abs, content, "utf-8");
 			}
 			await this.git(["add", "--", ...applied.files.keys()]);
 		} catch (e) {
@@ -357,6 +385,34 @@ export class PatchApplier {
 					);
 				}
 			}
+		}
+
+		// No-op detection: an intent that stages zero delta is information,
+		// not a conflict — tell the agent its proposal changes nothing.
+		const stagedEmpty = await this.git(["diff", "--cached", "--quiet"]).then(
+			() => true,
+			(e) => {
+				if ((e as { code?: number }).code === 1) return false; // 1 = delta exists
+				throw e;
+			},
+		);
+		if (stagedEmpty) {
+			await this.rollback(
+				applied.files,
+				existedBefore,
+				originalBranch,
+				switched,
+			);
+			return this.reject(
+				intent,
+				{
+					ok: false,
+					kind: "no_change",
+					detail: "proposal produces zero delta against HEAD",
+				},
+				t0,
+				lockWaitMs,
+			);
 		}
 
 		// Commit.

@@ -30,6 +30,12 @@ export const EditIntentSchema = Type.Object({
 	branch: Type.Optional(Type.String()),
 	edits: Type.Array(EditInputSchema, { minItems: 1 }),
 	test_commands: Type.Optional(Type.Array(Type.String())),
+	partition: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Path scope this intent promises to touch. Entries are repo-relative file paths or directory prefixes (trailing slash optional). Edits outside the partition are rejected mechanically.",
+		}),
+	),
 	rationale: Type.Optional(Type.String()),
 });
 
@@ -43,7 +49,9 @@ export type RejectionKind =
 	| "test_failure"
 	| "stale_base"
 	| "busy"
-	| "dirty_tree";
+	| "dirty_tree"
+	| "partition_violation"
+	| "no_change";
 
 export interface Rejection {
 	ok: false;
@@ -93,6 +101,17 @@ export function validateIntent(raw: unknown): string | null {
 		return "base_commit required";
 	if (!Array.isArray(intent.edits) || intent.edits.length === 0)
 		return "edits must be a non-empty array";
+	if (intent.partition !== undefined) {
+		if (!Array.isArray(intent.partition))
+			return "partition must be an array of paths";
+		for (let i = 0; i < intent.partition.length; i++) {
+			const entry = intent.partition[i];
+			if (typeof entry !== "string" || entry.length === 0)
+				return `partition[${i}] must be a non-empty path`;
+			if (entry.startsWith("/"))
+				return `partition[${i}] must be relative to the repo root`;
+		}
+	}
 	for (let i = 0; i < intent.edits.length; i++) {
 		const e = intent.edits[i] as Record<string, unknown>;
 		if (typeof e.file !== "string" || e.file.length === 0)
