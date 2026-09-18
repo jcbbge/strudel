@@ -70,8 +70,8 @@ The index changed from 268 to 265 file primitives (212 to 209 on-demand).
 
 No positive case lost top-5 coverage. The remaining multi-capability
 `source-and-deck` case lacks a required capability even in the top 20; a reranker
-cannot repair that missing candidate. The lexical result also prevents claiming
-that a model-backed selector has already won.
+cannot repair that missing candidate. At this stage, lexical selection beat the
+embedding order; the live Jev comparison below tests an additional ranking step.
 
 Warm semantic searches in this file-catalog run took roughly 97–101 ms. The
 first search spent roughly 5.2 seconds embedding changed/missing catalog entries.
@@ -91,12 +91,68 @@ Do not mix those candidate populations or call file-cache warmth full-runtime
 cache warmth. Duplicate representations are an additional runtime-catalog
 question, not silently removed by this repair.
 
-Live Jev comparison is **blocked on credentials**. The endpoint returned HTTP
-403, `authentication_error`, "Must supply an API key!" No configured key was
-found; no live Jev score, cost, or downstream benefit is claimed. The request
-adapter is prepared from the current docs, but its live contract remains
-unverified until access is supplied. Paired end-to-end reranker trials depend on
-that result and have not been run.
+## Live Jev result — credential boundary cleared
+
+The initial unauthenticated probe returned HTTP 403. The operator subsequently
+supplied access for this evaluation; the credential was used through the process
+environment and was not saved in repository files or evaluation reports.
+
+All 14 frozen-candidate requests succeeded, resolving `jev-latest` to
+`jev-1.13.0`. Complete positive-task top-5 coverage rose from **8/12 to 11/12**,
+with no positive-case regressions. The remaining failure was the already-known
+missing candidate. Requests averaged **263 ms**, ranging from 169 to 748 ms.
+Usage: 56,556 input tokens and 4,116 output tokens. At the acquired public rate
+of $0.042 per million input tokens (output free), estimated scorer cost was
+**$0.002375**, not a measured invoice. Source: https://docs.typesafe.ai/models.md.
+
+This was not flawless judgment: Jev scored an unrelated `tool/pdf` candidate
+2.78/3 with confidence 0.78 on the symbol-impact case. Its catalog description
+was generic imperative text. The observation does not establish the error's
+cause, but it rules out treating typed output or confidence as correctness.
+
+## Paired Pi outcome pilot
+
+Three new, predeclared read-only capability-instruction tasks were run twice per
+arm: cross-file caller/impact commands, source search with unknown identifiers,
+and combined browser-console/Word tracked-change instructions. Each required
+actual successful source reads, source citations, and specific source-grounded
+commands. An external deterministic checker inspected tool results and final
+answers. These were completed instruction-retrieval tasks, **not** code edits,
+browser operation, or DOCX artifact production.
+
+Each pair received the same hashed initial candidate pool. The main model and
+settings were fixed. Initial selections were supplied before main-model
+inference; a real discovery tool allowed recovery if the shortlist was
+insufficient. Jev was called live inside its arm, including on any recovery
+search. Thus this tests a proposed preselection path, not an installed change
+to Strudel's existing gateway. Later discovery queries could diverge. Order was
+baseline/Jev for repetition one, then Jev/baseline for repetition two.
+
+| Across six runs per arm | Embedding order | Jev order |
+|---|---:|---:|
+| Independently checked success | 6/6 | 6/6 |
+| Main-model requests | 14 | 12 |
+| Recovery discovery calls | 2 | 0 |
+| Summed selection-to-answer time | 70.835 s | 70.458 s |
+| Estimated model + scorer cost | $0.365508 | $0.345858 |
+
+Jev removed one recovery/model round trip in each combined browser/Word run,
+saving 3.06 s and 2.21 s there. It did not consistently speed up the simple
+single-capability tasks. Overall elapsed time was effectively tied; estimated
+cost was 5.4% lower, not remotely a demonstrated 100x improvement.
+
+Timing includes actual scorer calls, session setup, main-model inference, reads,
+and recovery retrieval; shared initial retrieval is measured separately and
+excluded from the table. Cache reads were unequal (8,448 baseline versus zero
+Jev), so these are observed conditions, not a controlled cold-cache result.
+Pi costs use its model catalog; scorer cost uses the public rate above. Actual
+attributable billing remains UNKNOWN. Six paired observations over three tasks
+are not evidence of statistical significance or general coding-task benefit.
+
+**Decision:** keep Jev as an opt-in evaluation candidate, not a default runtime
+dependency or authorization gate. The ranking improvement is demonstrated; the
+bounded multi-capability recovery benefit warrants further workload validation,
+not a blanket speed claim. No production reranker or compaction change was made.
 
 Private raw evidence and the deterministic catalog verifier are stored outside
 the repository under the operator's local state directory. No credentials or
