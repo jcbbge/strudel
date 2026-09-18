@@ -1,0 +1,75 @@
+[
+	{
+		"id": "browser-errors",
+		"query": "The checkout page fails after clicking Pay. Inspect browser console messages and failed network requests.",
+		"required": [["skill/dev-browser"]]
+	},
+	{
+		"id": "flaky-ci",
+		"query": "A test fails intermittently on the build server but succeeds when rerun. Investigate the nondeterminism.",
+		"required": [["skill/fix-flaky-tests", "skill/debugging"]]
+	},
+	{
+		"id": "pdf-pages",
+		"query": "Combine two PDF documents and rotate the upside-down pages in the result.",
+		"required": [["skill/pdf"]]
+	},
+	{
+		"id": "spreadsheet",
+		"query": "Repair formulas and add a chart to this Excel workbook, preserving its formatting.",
+		"required": [["skill/xlsx"]]
+	},
+	{
+		"id": "word-review",
+		"query": "Revise the contract in a Word document while preserving tracked changes and comments.",
+		"required": [["skill/docx"]]
+	},
+	{
+		"id": "presentation",
+		"query": "Turn my notes into an art-directed HTML slide deck for a client pitch.",
+		"required": [["skill/atelier", "skill/editorial-magazine"]]
+	},
+	{
+		"id": "symbol-impact",
+		"query": "Before changing this function, identify its callers and the cross-file impact of the change.",
+		"required": [["skill/coraline", "plugin/coraline"]]
+	},
+	{
+		"id": "semantic-code",
+		"query": "Find the part of this codebase that freezes a quoted price. I do not know the function or variable names.",
+		"required": [["skill/colgrep", "plugin/colgrep"]]
+	},
+	{
+		"id": "skill-evaluation",
+		"query": "Improve a reusable agent instruction and measure whether it changes behavior on held-out tasks rather than merely sounding better.",
+		"required": [["skill/build-skill"]]
+	},
+	{
+		"id": "diagram",
+		"query": "Explain this architecture visually on our live interactive whiteboard and connect the existing shapes.",
+		"required": [["skill/tldraw-canvas", "skill/tldraw-offline"]]
+	},
+	{
+		"id": "browser-and-docx",
+		"query": "Inspect the browser checkout errors, then produce a Word report with tracked revisions for the client.",
+		"required": [["skill/dev-browser"], ["skill/docx"]]
+	},
+	{
+		"id": "source-and-deck",
+		"query": "Find every caller of the billing function and turn the architecture findings into an HTML presentation.",
+		"required": [
+			["skill/coraline", "plugin/coraline"],
+			["skill/atelier", "skill/editorial-magazine"]
+		]
+	},
+	{
+		"id": "no-specialist",
+		"query": "What is 17 multiplied by 19?",
+		"required": []
+	},
+	{
+		"id": "unavailable-hardware",
+		"query": "Physically replace the failed cooling fan in my laptop.",
+		"required": []
+	}
+]

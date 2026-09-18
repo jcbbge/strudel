@@ -12,6 +12,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
+import { parseDocument } from "yaml";
 
 export interface Primitive {
 	name: string;
@@ -143,6 +144,11 @@ async function readPrimitive(
 		name = entryName; // directory name
 	} else {
 		const ext = extname(entryName).toLowerCase();
+		// A collection's README describes the collection, not a selectable item.
+		// Directory bundles may still use their own README as an entry point.
+		if (basename(entryName, extname(entryName)).toLowerCase() === "readme") {
+			return undefined;
+		}
 		if (ext && !INDEXABLE_EXT.has(ext)) return undefined;
 		file = full;
 		name = basename(entryName, ext);
@@ -241,50 +247,38 @@ interface Frontmatter {
 function splitFrontmatter(raw: string): { fm: Frontmatter; body: string } {
 	const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
 	if (!m) return { fm: {}, body: raw };
-	const block = m[1];
-	const get = (key: string): string | undefined => {
-		const r = block.match(new RegExp(`^${key}\\s*:\\s*(.+)$`, "im"));
-		return r ? r[1].trim().replace(/^["']|["']$/g, "") : undefined;
-	};
-	return {
-		fm: {
-			name: get("name"),
-			description: get("description"),
-			intents: getIntents(block),
-		},
-		body: raw.slice(m[0].length),
-	};
-}
-
-/**
- * Parse an optional `intents:` field from a frontmatter block. Accepts either
- * an inline comma-separated value (`intents: a, b`) or a YAML list:
- *
- *     intents:
- *       - a
- *       - b
- */
-function getIntents(block: string): string[] | undefined {
-	const lines = block.split("\n");
-	const i = lines.findIndex((l) => /^intents\s*:/i.test(l));
-	if (i === -1) return undefined;
-
-	const inline = lines[i].replace(/^intents\s*:/i, "").trim();
-	const out: string[] = [];
-	if (inline) {
-		for (const part of inline.split(",")) {
-			const t = part.trim().replace(/^["']|["']$/g, "");
-			if (t) out.push(t);
+	const body = raw.slice(m[0].length);
+	try {
+		const document = parseDocument(m[1]);
+		if (document.errors.length) return { fm: {}, body };
+		const data = document.toJS({ maxAliasCount: 50 });
+		if (!data || typeof data !== "object" || Array.isArray(data)) {
+			return { fm: {}, body };
 		}
-	} else {
-		for (const line of lines.slice(i + 1)) {
-			const m = line.match(/^\s+-\s+(.+)$/);
-			if (!m) break; // end of the YAML list
-			const t = m[1].trim().replace(/^["']|["']$/g, "");
-			if (t) out.push(t);
-		}
+		const text = (value: unknown): string | undefined =>
+			typeof value === "string" && value.trim() ? value.trim() : undefined;
+		const values =
+			typeof data.intents === "string"
+				? data.intents
+						.split(",")
+						.map((value: string) => value.trim().replace(/^["']|["']$/g, ""))
+				: Array.isArray(data.intents)
+					? data.intents
+					: [];
+		const intents = values
+			.map(text)
+			.filter((value: string | undefined): value is string => !!value);
+		return {
+			fm: {
+				name: text(data.name),
+				description: text(data.description),
+				intents: intents.length ? intents : undefined,
+			},
+			body,
+		};
+	} catch {
+		return { fm: {}, body };
 	}
-	return out.length > 0 ? out : undefined;
 }
 
 /** First non-heading, non-fence prose line of a body — the description fallback. */
